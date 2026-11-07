@@ -66,6 +66,30 @@ To try replay without an agent, `POST /replay` with
 at `GET /runs/{run_id}/events`. Use a single server process; the development log resets
 on restart.
 
+## Agent loop
+
+The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools/gate
+(`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. It writes
+`contracts/events.py` events but is not yet connected to `AgentPort`, so live API runs still
+return 503. The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
+finished gate/critic checks into state and dispatches one specialist per step
+(`premise`, `hypothesize`, `plan_test`, `execute_test`, `choose_test`, `interpret`,
+`verdict`, `report`). When a test passes its gates, the LLM chooses the next follow-up
+(`out_of_sample`, `market_test`, `placebo`, or `holdout_confirm` once G1-G6 pass) or
+concludes. When a gate fails, testing that hypothesis stops and the failure decides its
+verdict; G6 (market) only locks the holdout. State is checkpointed, so approval mode can
+pause on each decision and resume. Run it with the fake LLM (no API key needed):
+
+```powershell
+.\.venv\Scripts\python -m backend.agent                         # live mode
+.\.venv\Scripts\python -m backend.agent --mode approval         # approve each decision
+.\.venv\Scripts\python -m backend.agent --out replays\fake.jsonl # save the event log
+.\.venv\Scripts\python -m backend.agent --tools mock            # Person A's mock tools
+```
+
+A saved log is valid replay input: with the server running, `POST /replay` with
+`{"log_file":"fake.jsonl","speed":1}` streams the agent's graph to the UI.
+
 ## Checks and build
 
 ```powershell
