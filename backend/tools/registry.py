@@ -3,19 +3,54 @@
 `TOOL_REGISTRY` is a list of `{name, description, json_schema}`. `dispatch` validates arguments and
 never raises, so a bad call from the model comes back as `status="error"`.
 
-To swap in a real tool, point its entry at the new function. Names and arguments stay the same,
-so nothing on the agent side has to change.
+Which implementation runs is set by the `WHACK_TOOLS` environment variable:
+- `real`: the statistical tools on the built dataset (`real.py`, `holdout.py`).
+- `mock`: fake numbers from `mock.py`, every result marked `extra["mock"] = True`.
+- `auto` (default): real when the dataset is built, mock otherwise, so a fresh clone without
+  data still runs end to end. Check `extra["mock"]` before trusting any number.
 """
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from backend.tools import mock, schemas
+from backend.tools import data, holdout, mock, real, schemas
 from backend.tools.hashing import hash_args
 from backend.tools.schemas import ToolResult
+
+_REAL_HANDLERS: dict[str, Callable[[Any], ToolResult]] = {
+    function.__name__: function
+    for function in (
+        real.describe_dataset,
+        real.define_slice,
+        real.add_feature,
+        real.compare_groups,
+        real.regress,
+        real.out_of_sample,
+        real.persistence,
+        real.market_test,
+        real.power,
+        real.placebo,
+        holdout.holdout_confirm,
+    )
+}
+
+
+def active_backend() -> Literal["real", "mock"]:
+    """The implementation `dispatch` will use right now."""
+    choice = os.environ.get("WHACK_TOOLS", "auto").strip().lower()
+    if choice in ("real", "mock"):
+        return choice
+    return "real" if data.is_built() else "mock"
+
+
+def reset_tool_state() -> None:
+    """Forget prior tests, hypotheses and holdout use in both implementations."""
+    real.reset_state()
+    mock.reset_mock_state()
 
 
 @dataclass(frozen=True)
@@ -23,7 +58,15 @@ class Tool:
     name: str
     description: str
     args_model: type[BaseModel]
-    handler: Callable[[Any], ToolResult]
+    mock: Callable[[Any], ToolResult]
+
+    @property
+    def real(self) -> Callable[[Any], ToolResult]:
+        return _REAL_HANDLERS[self.name]
+
+    @property
+    def handler(self) -> Callable[[Any], ToolResult]:
+        return self.real if active_backend() == "real" else self.mock
 
 
 _TOOLS: tuple[Tool, ...] = (

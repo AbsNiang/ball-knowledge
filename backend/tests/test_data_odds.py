@@ -138,6 +138,40 @@ def test_parse_recovers_alignment_after_an_orphan_row():
     assert [issue["kind"] for issue in parsed.issues] == ["unpaired_row"]
 
 
+def test_misdated_pair_still_pairs_by_rotation_without_shifting_later_games():
+    # Real rows from the 2010-11 archive: CHA's row says Jan 29, LAC's says Jan 30.
+    raw = odds_rows(
+        (1230, 501, "V", "Boston", 100, 190, 150),
+        (1230, 502, "H", "Miami", 110, 5, -170),
+        (129, 515, "V", "Charlotte", 88, 192, 235),
+        (130, 516, "H", "LAClippers", 103, 6, -275),
+        (130, 801, "V", "Miami", 108, 202, -105),
+        (130, 802, "H", "OklahomaCity", 103, 1, -115),
+    )
+    parsed = parse_season_odds(raw, "2010-11")
+    pairs = list(zip(parsed.games["away"], parsed.games["home"]))
+    assert pairs == [("BOS", "MIA"), ("CHA", "LAC"), ("MIA", "OKC")]
+    assert parsed.games.iloc[1]["date"] == pd.Timestamp(2011, 1, 29)
+    assert [issue["kind"] for issue in parsed.issues] == ["dates_disagree"]
+
+
+def test_home_row_before_away_row_is_never_paired():
+    raw = odds_rows(
+        (130, 516, "H", "LAClippers", 103, 6, -275),
+        (130, 801, "V", "Miami", 108, 202, -105),
+    )
+    parsed = parse_season_odds(raw, "2010-11")
+    assert parsed.games.empty
+
+
+def test_rows_with_non_consecutive_rotations_are_not_paired():
+    raw = odds_rows(
+        (130, 801, "V", "Miami", 108, 202, -105),
+        (130, 804, "H", "OklahomaCity", 103, 1, -115),
+    )
+    assert parse_season_odds(raw, "2010-11").games.empty
+
+
 def test_parse_records_missing_close_but_keeps_the_game():
     raw = odds_rows(
         (1030, 501, "V", "Boston", 95, "NL", 180),

@@ -144,11 +144,17 @@ def parse_season_odds(raw: pd.DataFrame, season: str) -> OddsParse:
     index = 0
     while index + 1 < len(records):
         first, second = records[index], records[index + 1]
-        if dates[index] is None or dates[index] != dates[index + 1] or not _is_pair(first, second):
+        day, other_day = dates[index], dates[index + 1]
+        if day is None or other_day is None or not _is_pair(first, second, day, other_day):
             issues.append({"season": season, "kind": "unpaired_row", "row": index})
             index += 1
             continue
-        game = _parse_game(first, second, dates[index], season, issues)
+        if day != other_day:
+            # The archive sometimes dates the two rows of one game differently. The away row's
+            # date is used, and the join's +-1 day score check settles which one is right.
+            detail = f"{day} / {other_day} {first['team']} at {second['team']}"
+            issues.append({"season": season, "kind": "dates_disagree", "detail": detail})
+        game = _parse_game(first, second, day, season, issues)
         if game is not None:
             games.append(game)
         index += 2
@@ -157,16 +163,35 @@ def parse_season_odds(raw: pd.DataFrame, season: str) -> OddsParse:
     return OddsParse(pd.DataFrame(games, columns=ODDS_COLUMNS), issues)
 
 
-def _is_pair(first: dict, second: dict) -> bool:
-    sides = {str(first.get("vh")).strip().upper(), str(second.get("vh")).strip().upper()}
-    return sides in ({"V", "H"}, {"N"})
+def _side(row: dict) -> str:
+    return str(row.get("vh")).strip().upper()
+
+
+def _rotation(row: dict) -> int | None:
+    try:
+        return int(float(str(row.get("rot"))))
+    except ValueError:
+        return None
+
+
+def _is_pair(first: dict, second: dict, day: date, other_day: date) -> bool:
+    """Return True when two consecutive rows are the away and home rows of one game.
+
+    The away row always comes first, with rotation numbers n and n + 1. When rotation numbers
+    are present they decide, so a misdated row can't shift every later pairing. Without them the
+    rows must share a date.
+    """
+    if (_side(first), _side(second)) not in (("V", "H"), ("N", "N")):
+        return False
+    rotations = _rotation(first), _rotation(second)
+    if None in rotations:
+        return day == other_day
+    return rotations[1] == rotations[0] + 1 and abs((other_day - day).days) <= 1
 
 
 def _parse_game(
     first: dict, second: dict, day: date, season: str, issues: list[dict]
 ) -> dict | None:
-    if str(first.get("vh")).strip().upper() == "H":
-        first, second = second, first
     away, home = (franchise_from_odds_name(row["team"]) for row in (first, second))
     if away is None or home is None:
         names = f"{first['team']} at {second['team']}"
