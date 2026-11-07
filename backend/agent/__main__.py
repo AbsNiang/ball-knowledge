@@ -1,8 +1,15 @@
-"""Run the agent loop with the fake LLM and stub tools: `python -m backend.agent --help`."""
+"""Run the agent loop: `python -m backend.agent --help`.
+
+`--llm fake` (default, or `LLM_MODE` from `.env`) needs no key; `--llm gemini` uses
+`GEMINI_API_KEY`, `GEMINI_MODEL` and `GEMINI_RPM` from `.env`.
+"""
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from backend.agent.graph import AgentRun
 from backend.agent.ports import RegistryTools
@@ -57,16 +64,30 @@ async def main() -> None:
         help="stub: canned B2B numbers; mock: Person A's mock tools via the registry",
     )
     parser.add_argument("--out", type=Path, help="write the event log as JSONL")
+    load_dotenv()
+    parser.add_argument(
+        "--llm",
+        choices=["fake", "gemini"],
+        default=os.environ.get("LLM_MODE", "fake"),
+        help="fake: scripted answers, no key; gemini: real calls via GEMINI_* in .env",
+    )
     args = parser.parse_args()
 
+    if args.llm == "gemini":
+        from backend.llm.gemini import GeminiGateway
+
+        llm = GeminiGateway.from_env()
+        print(f"using {llm.model_id}, at most {llm._limiter.rpm} requests per minute")
+    else:
+        llm = FakeLLM(b2b_script)
     run = AgentRun(
         args.question,
-        llm=FakeLLM(b2b_script),
+        llm=llm,
         tools=StubTools() if args.tools == "stub" else RegistryTools(),
         gate=StubGate(),
         mode=args.mode,
         budget={"max_llm_calls": args.max_llm_calls},
-        run_id="fake-b2b",
+        run_id=f"{args.llm}-run",
     )
     run.log.subscribe(_show)
     review = await run.start()

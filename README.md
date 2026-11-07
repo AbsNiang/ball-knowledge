@@ -53,8 +53,9 @@ The directory layout follows `TASKS.md`; role ownership follows the addendum in
 contracts. The server includes typed run/intervention/report endpoints, an in-memory
 event log, WebSocket backfill/live streaming, and timed JSONL replay. Live run creation
 returns `503 agent_unavailable` until B supplies `AgentPort` to `create_app(agent=...)`.
-Statistical tools, durable storage, graph/report projection, and Gemini integration
-remain planned work. Replay reports currently return 409; replay streams graph events.
+Statistical tools, durable storage, and graph/report projection remain planned work;
+Gemini works from the agent CLI (`--llm gemini`) but not yet through the API.
+Replay reports currently return 409; replay streams graph events.
 
 See [contracts/README.md](contracts/README.md) for endpoint shapes, handoffs, schema
 generation, error semantics, and agent integration. Python contracts are authoritative;
@@ -85,7 +86,11 @@ pause on each decision and resume. Run it with the fake LLM (no API key needed):
 .\.venv\Scripts\python -m backend.agent --mode approval         # approve each decision
 .\.venv\Scripts\python -m backend.agent --out replays\fake.jsonl # save the event log
 .\.venv\Scripts\python -m backend.agent --tools mock            # Person A's mock tools
+.\.venv\Scripts\python -m backend.agent --llm gemini --tools mock # real Gemini decisions
 ```
+
+`--llm gemini` reads `GEMINI_API_KEY` and `GEMINI_MODEL` from `.env` and sends at most
+`GEMINI_RPM` (default 5) requests per minute, so a full run of about 35 calls takes ~7 minutes.
 
 A saved log is valid replay input: with the server running, `POST /replay` with
 `{"log_file":"fake.jsonl","speed":1}` streams the agent's graph to the UI.

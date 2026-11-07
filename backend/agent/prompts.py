@@ -24,14 +24,16 @@ PROMPTS = {
     "- Include exactly one kind='chance' hypothesis and at least one kind='confounder' (team "
     "quality, schedule, opponent rest, the market line).\n"
     "- Each hypothesis declares its metric, groups, direction and primary test now. They are "
-    "frozen before the holdout is used.\n"
+    "frozen before the holdout is used. Pick each primary_test using the descriptions in "
+    "`tools`.\n"
     "- Prefer explanations that make a testable secondary prediction.",
     "revise_hypothesis": _ORCHESTRATOR
     + "A reviewer objected to one hypothesis. Answer each point in `feedback`: revise the "
     "hypothesis, or return it unchanged with a rationale that justifies it point by point. "
     "Keep its kind.",
     "plan_test": _ORCHESTRATOR
-    + "Choose the primary test and controls for one hypothesis. Confounder hypotheses use "
+    + "Choose the primary test and controls for one hypothesis, using the descriptions in "
+    "`tools`. Confounder hypotheses use "
     "regress with the confounding variables as controls. Market claims include 'spread' as a "
     "control. If `feedback` is present, address it.",
     "choose_test": _ORCHESTRATOR
