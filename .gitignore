@@ -15,3 +15,5 @@ dist/
 .DS_Store
 backend/data/raw/
 backend/data/processed/
+.codex/
+.claude/

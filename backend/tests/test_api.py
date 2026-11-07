@@ -192,3 +192,53 @@ def test_openapi_exposes_all_planned_http_paths():
         "/runs/{run_id}/report",
         "/replay",
     }.issubset(paths)
+
+
+def test_demo_websocket_pause_redirect_and_retained_history():
+    with TestClient(create_app()) as api:
+        result = api.post("/demo/runs", json={"question": "Investigate fatigue"})
+        assert result.status_code == 202
+        run_id = result.json()["run_id"]
+        with api.websocket_connect(f"/runs/{run_id}/events") as ws:
+            while True:
+                event = ws.receive_json()
+                if event.get("type") == "node_created":
+                    original = event["node_id"]
+                    break
+            ws.send_json({"request_id": "pause-1", "command": {"type": "pause", "payload": {}}})
+            messages = []
+            while not any(m.get("type") == "command_ack" for m in messages):
+                messages.append(ws.receive_json())
+            assert messages[-1]["request_id"] == "pause-1"
+            events = api.get(f"/runs/{run_id}/events").json()
+            assert [e for e in events if e["type"] == "run_status"][-1]["payload"][
+                "status"
+            ] == "paused"
+            ws.send_json(
+                {
+                    "request_id": "redirect-1",
+                    "command": {
+                        "type": "redirect",
+                        "node_id": original,
+                        "payload": {"statement": "Explore travel instead"},
+                    },
+                }
+            )
+            while True:
+                message = ws.receive_json()
+                if message.get("type") == "edge_created":
+                    assert message["payload"]["edge"]["target"] == original
+                    assert message["payload"]["edge"]["label"] == "Explore travel instead"
+                    break
+            events = api.get(f"/runs/{run_id}/events").json()
+            assert any(
+                e["type"] == "node_updated" and "pruned" in e["payload"]["node"]["flags"]
+                for e in events
+            )
+            assert api.post("/demo/runs", json={"question": "Another run"}).status_code == 409
+            ws.send_json({"request_id": "invalid-1", "command": {"type": "bogus"}})
+            while True:
+                message = ws.receive_json()
+                if message.get("type") == "command_error":
+                    assert message["request_id"] == "invalid-1"
+                    break

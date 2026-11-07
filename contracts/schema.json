@@ -255,6 +255,18 @@
           "title": "Target",
           "type": "string"
         },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
         "type": {
           "enum": [
             "derives_from",
@@ -561,9 +573,12 @@
               "add_hypothesis": "#/$defs/AddHypothesis",
               "approve": "#/$defs/Approve",
               "override": "#/$defs/Override",
+              "pause": "#/$defs/Pause",
               "prune": "#/$defs/Prune",
+              "redirect": "#/$defs/Redirect",
               "reject": "#/$defs/Reject",
               "rerun": "#/$defs/Rerun",
+              "resume": "#/$defs/Resume",
               "set_mode": "#/$defs/SetMode"
             },
             "propertyName": "type"
@@ -589,6 +604,15 @@
             },
             {
               "$ref": "#/$defs/AddHypothesis"
+            },
+            {
+              "$ref": "#/$defs/Pause"
+            },
+            {
+              "$ref": "#/$defs/Resume"
+            },
+            {
+              "$ref": "#/$defs/Redirect"
             }
           ],
           "title": "Request"
@@ -953,6 +977,29 @@
       "title": "OverridePayload",
       "type": "object"
     },
+    "Pause": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pause",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "default": null,
+          "title": "Node Id",
+          "type": "null"
+        },
+        "payload": {
+          "$ref": "#/$defs/Contract"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Pause",
+      "type": "object"
+    },
     "Prune": {
       "additionalProperties": false,
       "properties": {
@@ -974,6 +1021,30 @@
         "node_id"
       ],
       "title": "Prune",
+      "type": "object"
+    },
+    "Redirect": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "redirect",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/HypothesisPayload"
+        }
+      },
+      "required": [
+        "type",
+        "node_id",
+        "payload"
+      ],
+      "title": "Redirect",
       "type": "object"
     },
     "Reject": {
@@ -1128,6 +1199,29 @@
       "title": "Rerun",
       "type": "object"
     },
+    "Resume": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "resume",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "default": null,
+          "title": "Node Id",
+          "type": "null"
+        },
+        "payload": {
+          "$ref": "#/$defs/Contract"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Resume",
+      "type": "object"
+    },
     "RunAccepted": {
       "additionalProperties": false,
       "properties": {
@@ -1212,6 +1306,7 @@
           "enum": [
             "queued",
             "running",
+            "paused",
             "awaiting_approval",
             "completed",
             "failed",
@@ -1359,9 +1454,12 @@
           "add_hypothesis": "#/$defs/AddHypothesis",
           "approve": "#/$defs/Approve",
           "override": "#/$defs/Override",
+          "pause": "#/$defs/Pause",
           "prune": "#/$defs/Prune",
+          "redirect": "#/$defs/Redirect",
           "reject": "#/$defs/Reject",
           "rerun": "#/$defs/Rerun",
+          "resume": "#/$defs/Resume",
           "set_mode": "#/$defs/SetMode"
         },
         "propertyName": "type"
@@ -1387,6 +1485,15 @@
         },
         {
           "$ref": "#/$defs/AddHypothesis"
+        },
+        {
+          "$ref": "#/$defs/Pause"
+        },
+        {
+          "$ref": "#/$defs/Resume"
+        },
+        {
+          "$ref": "#/$defs/Redirect"
         }
       ],
       "title": "Intervention"
