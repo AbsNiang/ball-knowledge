@@ -1,11 +1,15 @@
-"""Append-only event log for one run. In memory for now; SQLite persistence comes later."""
+"""Append-only event log for one run, in the contract's wire format (`contracts/events.py`).
+
+The agent keeps its own synchronous log and projection; C's `EventSink` receives the same events
+once the agent is connected through `AgentPort`. In memory for now.
+"""
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 
 from backend.events.projection import ResearchGraph
-from contracts.events import Event
+from contracts.events import Event, Payload
+from contracts.models import Actor
 
 Listener = Callable[[Event], None]
 
@@ -18,9 +22,18 @@ class EventLog:
         self._listeners: list[Listener] = []
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    def append(self, kind: str, data: dict[str, Any]) -> Event:
+    def now(self) -> datetime:
+        return self._clock()
+
+    def append(self, actor: Actor, payload: Payload, node_id: str | None = None) -> Event:
         event = Event(
-            seq=len(self._events) + 1, run_id=self.run_id, ts=self._clock(), kind=kind, data=data
+            seq=len(self._events) + 1,
+            run_id=self.run_id,
+            ts=self.now(),
+            actor=actor,
+            type=payload.type,
+            node_id=node_id,
+            payload=payload,
         )
         self._events.append(event)
         self.graph.apply(event)

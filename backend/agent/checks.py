@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from backend.agent import critic
 from backend.agent.ports import CheckResult, Gate, ToolResult
+from backend.agent.record import Recorder
 from backend.events.store import EventLog
 from backend.llm.gateway import LLMGateway
 
@@ -27,14 +28,16 @@ class CheckRunner:
         self._gate = gate
         self._llm = llm
         self._log = log
+        self._rec = Recorder(log)
         self._tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._done: list[CheckBatch] = []
 
     def submit_gate(self, node_id: str, result: ToolResult, spec: Mapping[str, Any]) -> None:
         self._spawn(node_id, "gate", self._run_gate(node_id, result, spec))
 
-    def submit_critic(self, node_id: str) -> None:
-        self._spawn(node_id, "critic", self._run_critic(node_id))
+    def submit_critic(self, node_id: str, facts: Mapping[str, Any] | None = None) -> None:
+        """`facts` are extra evidence the node itself does not carry (a verdict's gates)."""
+        self._spawn(node_id, "critic", self._run_critic(node_id, facts))
 
     def pending(self) -> set[str]:
         return {nid for nid, tasks in self._tasks.items() if any(not t.done() for t in tasks)}
@@ -71,9 +74,9 @@ class CheckRunner:
             ]
         self._finish(CheckBatch(node_id, "gate", results))
 
-    async def _run_critic(self, node_id: str) -> None:
+    async def _run_critic(self, node_id: str, facts: Mapping[str, Any] | None) -> None:
         try:
-            result = await critic.review(self._llm, self._log.graph, node_id)
+            result = await critic.review(self._llm, self._log.graph, node_id, facts)
         except Exception as exc:  # noqa: BLE001 - fail closed and keep the run alive
             result = CheckResult(
                 node_id=node_id,
@@ -86,5 +89,5 @@ class CheckRunner:
 
     def _finish(self, batch: CheckBatch) -> None:
         for result in batch.results:
-            self._log.append("check_result", result.model_dump(mode="json"))
+            self._rec.check(result)
         self._done.append(batch)

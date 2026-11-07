@@ -30,6 +30,7 @@ from backend.agent.schemas import (
     SliceSpec,
 )
 from backend.agent.state import LEDGER_TOOLS
+from backend.tools.hashing import hash_args
 
 B2B_QUESTION = "Why do teams on the second night of a back-to-back underperform?"
 NOT_REPLICATED = "Inconclusive (not replicated)"
@@ -237,21 +238,38 @@ def _hash(value: Any) -> str:
 
 
 class StubTools:
+    """Canned results keyed by (hypothesis id, tool). Takes Person A's argument shapes."""
+
     def __init__(self, results: Mapping[tuple[str, str], dict[str, Any]] = B2B_RESULTS) -> None:
         self._results = results
         self._tests: dict[str, str] = {}  # test_id -> hypothesis id
+        self._slices: dict[str, str] = {}  # group_a hash -> hypothesis id (for market_test)
         self._holdout_used: set[str] = set()
 
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
         if tool == "holdout_confirm":
-            if args["hypothesis_id"] in self._holdout_used:
-                return ToolResult(tool=tool, args=args, status="error", error="already_used")
-            self._holdout_used.add(args["hypothesis_id"])
-        key = args["spec"]["id"] if "spec" in args else self._tests.get(args.get("test_id"), "?")
+            key = args["hypothesis_id"]
+            if key in self._holdout_used:
+                return ToolResult(
+                    tool=tool,
+                    args=args,
+                    status="error",
+                    reason="already_used",
+                    args_hash=hash_args(args),
+                )
+            self._holdout_used.add(key)
+        elif "spec" in args:
+            key = args["spec"]["id"]
+            self._slices[_hash(args["spec"]["group_a"])] = key
+        elif tool == "market_test":
+            key = self._slices.get(_hash(args["slice"]), "?")
+        else:
+            key = self._tests.get(args.get("test_id"), "?")
         canned = self._results.get((key, tool)) or self._fallback(tool, args)
         result = ToolResult(
             tool=tool,
             args=args,
+            args_hash=hash_args(args),
             slice_hash=_hash(args.get("spec", args))[:16],
             **{**canned, "extra": dict(canned.get("extra", {}))},
         )
@@ -306,7 +324,7 @@ class StubGate:
         gate_ids = {"out_of_sample": ["G5"], "market_test": ["G6"], "holdout_confirm": ["G7"]}
         gate_ids = gate_ids.get(result.tool, ["G1", "G2", "G3", "G4"] if primary else [])
         if result.status == "error":
-            return [check(g, False, f"Tool error: {result.error}") for g in gate_ids or ["error"]]
+            return [check(g, False, f"Tool error: {result.reason}") for g in gate_ids or ["error"]]
 
         x = result.extra
         if result.tool in LEDGER_TOOLS:

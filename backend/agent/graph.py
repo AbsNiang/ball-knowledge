@@ -18,11 +18,14 @@ from langgraph.types import Command
 
 from backend.agent.context import AgentContext
 from backend.agent.ports import Gate, Tools
+from backend.agent.record import Recorder
 from backend.agent.router import ROUTES, router
 from backend.agent.specialists import SPECIALISTS, intake
 from backend.agent.state import AgentState, Mode, initial_state
 from backend.events.store import EventLog
 from backend.llm.gateway import LLMGateway
+from contracts.events import RunCreated
+from contracts.models import Budget
 
 # Each router hop is two supersteps; budgets bound the LLM work, this bounds everything else.
 RECURSION_LIMIT = 2_000
@@ -65,7 +68,17 @@ class AgentRun:
         self.pending_review: dict[str, Any] | None = None
 
     async def start(self) -> dict[str, Any] | None:
-        """Run until the report is written, or until a decision needs human review."""
+        """Run until the report is written, or until a decision needs human review.
+
+        Standalone runs record `run_created` themselves; through the API, C's server does.
+        """
+        limits = self._initial["budget"]
+        created = RunCreated(
+            question=self._initial["question"],
+            mode=self._initial["mode"],
+            budget=Budget(max_llm_calls=limits["max_llm_calls"], max_tests=limits["max_tests"]),
+        )
+        self.log.append("system", created)
         return await self._invoke(self._initial)
 
     async def resume(self, action: str, note: str | None = None) -> dict[str, Any] | None:
@@ -84,7 +97,9 @@ class AgentRun:
         try:
             out = await self.graph.ainvoke(payload, self.config, context=self.context)
         except Exception as exc:
-            self.log.append("run_status", {"status": "failed", "error": repr(exc)})
+            rec = Recorder(self.log)
+            rec.error("agent_error", repr(exc))
+            rec.status("failed")
             raise
         interrupts = out.get("__interrupt__") or []
         self.pending_review = interrupts[0].value if interrupts else None

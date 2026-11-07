@@ -69,9 +69,9 @@ on restart.
 ## Agent loop
 
 The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools/gate
-(`backend/agent/stubs.py`). It is not yet connected to `AgentPort` and still emits the
-earlier untyped event shape, so it needs porting to `contracts/events.py` before it runs.
-The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
+(`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. It writes
+`contracts/events.py` events but is not yet connected to `AgentPort`, so live API runs still
+return 503. The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
 finished gate/critic checks into state and dispatches one specialist per step
 (`premise`, `hypothesize`, `plan_test`, `execute_test`, `choose_test`, `interpret`,
 `verdict`, `report`). When a test passes its gates, the LLM chooses the next follow-up
@@ -84,7 +84,11 @@ pause on each decision and resume. Run it with the fake LLM (no API key needed):
 .\.venv\Scripts\python -m backend.agent                         # live mode
 .\.venv\Scripts\python -m backend.agent --mode approval         # approve each decision
 .\.venv\Scripts\python -m backend.agent --out replays\fake.jsonl # save the event log
+.\.venv\Scripts\python -m backend.agent --tools mock            # Person A's mock tools
 ```
+
+A saved log is valid replay input: with the server running, `POST /replay` with
+`{"log_file":"fake.jsonl","speed":1}` streams the agent's graph to the UI.
 
 ## Checks and build
 

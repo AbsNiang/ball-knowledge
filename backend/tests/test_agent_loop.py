@@ -1,8 +1,12 @@
 """End-to-end runs of the stateful router with the fake LLM, stub tools and stub gate."""
 
 import asyncio
+from itertools import pairwise
+
+import pytest
 
 from backend.agent.graph import AgentRun
+from backend.agent.ports import RegistryTools
 from backend.agent.schemas import ClaimDecision, CriticChecklist, CriticReview
 from backend.agent.state import result_steps
 from backend.agent.stubs import (
@@ -15,6 +19,9 @@ from backend.agent.stubs import (
 )
 from backend.events.projection import reduce
 from backend.llm.fake import FakeLLM
+from backend.tools import mock
+from backend.tools.registry import _TOOLS_BY_NAME
+from contracts.events import Event
 
 B2B_VERDICTS = {
     "travel_fatigue": "Real but priced in",
@@ -51,11 +58,11 @@ def verdicts(run):
 
 
 def nodes(run, node_type):
-    return [n for n in run.log.graph.nodes.values() if n["type"] == node_type]
+    return [n for n in run.log.graph.nodes.values() if n.type == node_type]
 
 
 def edges(run, edge_type):
-    return [e for e in run.log.graph.edges.values() if e["type"] == edge_type]
+    return [e for e in run.log.graph.edges.values() if e.type == edge_type]
 
 
 def objecting_critic(decision_type, times=1, verdict="concerns"):
@@ -94,14 +101,19 @@ def test_live_run_gives_every_hypothesis_a_gated_verdict():
     assert verdicts(run) == B2B_VERDICTS
     events = run.log.events()
     assert [e.seq for e in events] == list(range(1, len(events) + 1))
-    assert events[-1].kind == "run_status" and events[-1].data["status"] == "completed"
+    assert events[-1].type == "run_status" and events[-1].payload.status == "completed"
     graph = run.log.graph
-    decisions = [n for n in graph.nodes.values() if n.get("llm")]
+    decisions = [n for n in graph.nodes.values() if n.llm]
     assert decisions
-    assert all(any(c["checker"] == "critic" for c in n["checks"]) for n in decisions)
-    gated = [n for n in nodes(run, "test_result") if n["tool_call"]["tool"] != "placebo"]
-    assert all(any(c["checker"] == "gate" for c in n["checks"]) for n in gated)
+    assert all(any(c.checker == "critic" for c in n.checks) for n in decisions)
+    gated = [n for n in nodes(run, "test_result") if n.tool.tool_name != "placebo"]
+    assert all(any(c.checker == "gate" for c in n.checks) for n in gated)
+    assert all(n.lifecycle == "complete" for n in graph.nodes.values())
     assert run.context.llm.calls <= run.state["budget"]["max_llm_calls"]
+
+
+def graph_version(run, node_id):
+    return run.log.graph.nodes[node_id].version
 
 
 def menus_offered(run):
@@ -190,7 +202,7 @@ def test_untestable_question_names_the_missing_data():
     run_to_end(run)
     assert run.state["outcome"] == "untestable"
     assert verdicts(run) == {"premise": "Untestable"}
-    assert nodes(run, "premise_check")[0]["missing_data"] == ["player tracking"]
+    assert nodes(run, "premise_check")[0].llm.parsed_output["missing_data"] == ["player tracking"]
     assert not nodes(run, "test_result")
 
 
@@ -199,8 +211,9 @@ def test_critic_concern_sends_the_track_back_with_its_feedback():
     run_to_end(run)
 
     first, *_later = nodes(run, "test_plan")
-    assert first["state"] == "flagged"
-    assert any(e["source"] == first["id"] for e in edges(run, "revises"))
+    assert first.check_outcome == "flagged"
+    revision = next(e for e in edges(run, "revises") if e.target == first.id)  # new -> old
+    assert graph_version(run, revision.source) == first.version + 1
     assert run.state["tracks"]["travel_fatigue"]["revisions"] == 1
     replans = [c for d, c in run.context.llm.transcript if d == "plan_test" and c["feedback"]]
     assert "Wrong comparison group" in replans[0]["feedback"]
@@ -213,12 +226,12 @@ def test_late_rejection_taints_descendants_and_reruns_the_track():
 
     graph = run.log.graph
     first = nodes(run, "test_plan")[0]
-    downstream = graph.descendants(first["id"])
-    assert first["state"] == "failed"
+    downstream = graph.descendants(first.id)
+    assert first.check_outcome == "failed"
     assert downstream, "the loop should have built on the plan before the critic landed"
-    assert all(graph.nodes[nid]["state"] == "tainted" for nid in downstream)
+    assert all("tainted" in graph.nodes[nid].flags for nid in downstream)
     reported = [row["verdict_node"] for row in run.state["report"]["verdicts"]]
-    assert all(graph.nodes[nid]["state"] != "tainted" for nid in reported)
+    assert all("tainted" not in graph.nodes[nid].flags for nid in reported)
     assert verdicts(run) == B2B_VERDICTS
 
 
@@ -245,9 +258,12 @@ def test_approval_mode_pauses_before_building_on_each_decision():
     assert first["type"] == "premise_check"
     assert built_before_approval == []
     graph = run.log.graph
-    decisions = [nid for nid, n in graph.nodes.items() if n.get("llm")]
+    decisions = [nid for nid, n in graph.nodes.items() if n.llm]
     assert [r["node_id"] for r in reviews] == decisions
-    assert all(any(c["checker"] == "human" for c in graph.nodes[n]["checks"]) for n in decisions)
+    assert all(any(c.checker == "human" for c in graph.nodes[n].checks) for n in decisions)
+    assert not any("awaiting_approval" in n.flags for n in graph.nodes.values())
+    statuses = [e.payload.status for e in run.log.events() if e.type == "run_status"]
+    assert statuses.count("awaiting_approval") == len(reviews)
     assert verdicts(run) == B2B_VERDICTS
 
 
@@ -267,10 +283,11 @@ def test_rejection_needs_a_note_and_triggers_a_revision():
     assert retry["node_id"] == review["node_id"] and "error" in retry
     assert revised["type"] == "premise_check" and revised["node_id"] != review["node_id"]
     first, second = nodes(run, "premise_check")
-    assert first["state"] == "failed"
-    assert any(
-        e["source"] == first["id"] and e["target"] == second["id"] for e in edges(run, "revises")
-    )
+    assert first.check_outcome == "failed"
+    assert any(e.source == second.id and e.target == first.id for e in edges(run, "revises"))
+    assert first.human[0].note == "Measure covers with ats_cover instead."
+    rejected = [e.payload.request for e in run.log.events() if e.type == "intervention"]
+    assert rejected[0].type == "reject" and rejected[0].node_id == first.id
     assert verdicts(run) == B2B_VERDICTS
 
 
@@ -306,8 +323,67 @@ def test_event_log_replays_to_the_same_graph():
     run_to_end(again)
 
     def shape(graph):
-        return {nid: (n["type"], n["title"], n["state"]) for nid, n in graph.nodes.items()}, sorted(
-            graph.edges
-        )
+        return {
+            nid: (n.type, n.title, n.check_outcome, sorted(n.flags))
+            for nid, n in graph.nodes.items()
+        }, sorted(graph.edges)
 
     assert shape(again.log.graph) == shape(run.log.graph)
+
+
+def test_the_event_log_is_valid_replay_input_for_the_api():
+    run = make_run(mode="approval")
+    run_to_end(run)
+    lines = run.log.to_jsonl().splitlines()
+    events = [Event.model_validate_json(line) for line in lines]  # what POST /replay does
+    assert [e.seq for e in events] == list(range(1, len(events) + 1))
+    assert all(a.ts <= b.ts for a, b in pairwise(events))
+    assert events[0].type == "run_created"
+    assert reduce(events) == run.log.graph
+    verdicts_out = [e.payload for e in events if e.type == "verdict_computed"]
+    assert {v.verdict.label for v in verdicts_out} == {"Real but priced in", "Luck", "Inconclusive"}
+
+
+def test_edges_follow_the_contract_directions():
+    run = make_run(objecting_critic("test_plan"))
+    run_to_end(run)
+    order = list(run.log.graph.nodes)  # creation order
+    for edge in run.log.graph.edges.values():
+        if edge.type in ("derives_from", "revises"):  # child -> parent, new -> old
+            assert order.index(edge.source) > order.index(edge.target), edge
+        else:  # supports / refutes: test result -> hypothesis
+            assert run.log.graph.nodes[edge.source].type == "test_result"
+            assert run.log.graph.nodes[edge.target].type == "hypothesis"
+
+
+def test_every_tool_call_fits_person_a_tool_schemas():
+    run = make_run()
+    run_to_end(run)
+    calls = [n.tool for n in nodes(run, "test_result")]
+    assert {c.tool_name for c in calls} >= {
+        "compare_groups",
+        "regress",
+        "out_of_sample",
+        "placebo",
+        "market_test",
+    }
+    for call in calls:
+        _TOOLS_BY_NAME[call.tool_name].args_model.model_validate(call.args)
+
+
+@pytest.fixture
+def fresh_mock_tools():
+    mock.reset_mock_state()
+    yield
+    mock.reset_mock_state()
+
+
+def test_the_loop_runs_on_person_a_mock_tools(fresh_mock_tools):
+    run = make_run()
+    run.context.tools = RegistryTools()
+    run_to_end(run)
+    assert run.state["status"] == "completed"
+    results = [n.tool.output for n in nodes(run, "test_result")]
+    assert results and all(r["status"] == "ok" for r in results), [
+        (r["tool"], r["reason"]) for r in results if r["status"] != "ok"
+    ]

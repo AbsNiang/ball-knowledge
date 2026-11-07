@@ -1,6 +1,6 @@
-"""Router state. It holds pointers, stages, gate outcomes and counters, never node content.
-
-Node content lives in the event log; specialists read it from `EventLog.graph` by id.
+"""Router state: pointers, stages, gate outcomes and counters, plus the two things the
+specialists act on that the contract's `Node` has no field for: each track's current spec and
+each step's tool call. Everything else about a node lives in the event log (`EventLog.graph`).
 """
 
 from typing import Any, Literal, TypedDict
@@ -52,6 +52,7 @@ class Step(TypedDict):
     stage: Stage  # the stage that produced it
     tool: str | None  # results: the tool that ran; choices: the action chosen
     gates: dict[str, GateStatus] | None  # results only: None until the gate lands
+    call: dict[str, Any] | None  # plans, choices and results: {"tool": ..., "args": ...}
 
 
 class Track(TypedDict):
@@ -61,6 +62,7 @@ class Track(TypedDict):
     kind: str
     stage: Stage
     spec_node: str | None
+    spec: dict[str, Any] | None  # the claim or hypothesis spec in `spec_node`
     steps: list[Step]
     revisions: int
     feedback: str | None  # critic or human objection the next attempt must answer
@@ -96,6 +98,7 @@ def new_track(track_id: str, kind: str, stage: Stage) -> Track:
         kind=kind,
         stage=stage,
         spec_node=None,
+        spec=None,
         steps=[],
         revisions=0,
         feedback=None,

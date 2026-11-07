@@ -1,7 +1,8 @@
 """What the agent needs from Person A's tools and gate.
 
-`ToolResult` and `CheckResult` mirror the H0-H2 contracts in TASKS.md. Move them to `contracts/`
-(with TypeScript copies) once all owners agree.
+`ToolResult` is A's (`backend/tools/schemas.py`), so tools plug in without an adapter layer.
+`CheckResult` is the gate's and critic's answer inside the agent; `Recorder.check` turns it into
+the contract's `CheckRecord`. It allows the pseudo-gate id "error", which fails closed.
 """
 
 from collections.abc import Mapping, Sequence
@@ -9,21 +10,12 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.tools.registry import dispatch
+from backend.tools.schemas import ToolResult
+
+__all__ = ["CheckResult", "Gate", "GateStatus", "RegistryTools", "ToolResult", "Tools"]
+
 GateStatus = Literal["pass", "fail"]
-
-
-class ToolResult(BaseModel):
-    tool: str
-    args: dict[str, Any]
-    status: Literal["ok", "error"] = "ok"
-    error: str | None = None
-    n: int | None = None
-    effect: float | None = None
-    ci_low: float | None = None
-    ci_high: float | None = None
-    p_value: float | None = None
-    slice_hash: str | None = None
-    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class CheckResult(BaseModel):
@@ -33,12 +25,20 @@ class CheckResult(BaseModel):
     status: Literal["pass", "flag", "fail"]
     severity: Literal["low", "medium", "high"] | None = None
     rationale: str
+    evidence: list[str] = Field(default_factory=list)
 
 
 class Tools(Protocol):
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
         """Deterministic and seeded. Never raises to the agent: errors come back as status='error'."""
         ...
+
+
+class RegistryTools:
+    """Person A's tool registry (mock tools until the real ones land) behind the `Tools` port."""
+
+    def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return dispatch(tool, args)
 
 
 class Gate(Protocol):

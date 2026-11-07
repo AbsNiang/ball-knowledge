@@ -45,6 +45,7 @@ from backend.agent.state import (
     track_gates,
 )
 from backend.events.projection import ResearchGraph
+from contracts.api import ModePayload, SetMode
 
 ROUTES = (
     "premise",
@@ -308,8 +309,10 @@ async def router(state: AgentState, runtime: Runtime[AgentContext]) -> Command:
     mode = state["mode"]
     for message in ctx.take_inbox():
         if message.get("type") == "set_mode" and message.get("mode") in ("live", "approval"):
-            mode = message["mode"]
-            rec.intervention("set_mode", None, mode=mode)
+            rec.intervention(SetMode(type="set_mode", payload=ModePayload(mode=message["mode"])))
+            if message["mode"] != mode:
+                mode = message["mode"]
+                rec.mode(mode)
     budget = Budget(**{**state["budget"], "llm_calls": ctx.llm.calls})
     state = {**state, "mode": mode, "budget": budget}
     if mode == "live":
@@ -320,11 +323,10 @@ async def router(state: AgentState, runtime: Runtime[AgentContext]) -> Command:
     if lost:
         raise RuntimeError(f"checks were submitted but never finished for {sorted(lost)}")
     for node_id, node_state in draft.node_states:
-        rec.update(node_id, state=node_state)
+        rec.mark(node_id, node_state)
 
     update, goto = route({**state, **draft.changes()})
-    if ctx.log.graph.status.get("budget") != budget:
-        rec.status(status="running", budget=budget)
+    rec.budget(budget["llm_calls"], budget["tests"])
     return Command(update={"mode": mode, "budget": budget, **update}, goto=goto)
 
 

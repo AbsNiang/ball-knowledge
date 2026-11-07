@@ -9,6 +9,7 @@ prose and `report`. `execute_test` runs tools; verdict labels come from the gate
 import asyncio
 import copy
 import re
+import time
 from typing import Any, Literal, Self
 
 from langgraph.runtime import Runtime
@@ -18,7 +19,7 @@ from pydantic import BaseModel, ValidationError, model_validator
 from backend.agent.context import AgentContext
 from backend.agent.ports import CheckResult, ToolResult
 from backend.agent.prompts import PROMPTS
-from backend.agent.record import Recorder
+from backend.agent.record import Recorder, contract_verdict, llm_record, tool_record
 from backend.agent.router import Draft, follow_up_menu, stopping_failures
 from backend.agent.schemas import (
     ClaimDecision,
@@ -47,6 +48,8 @@ from backend.agent.state import (
     track_gates,
 )
 from backend.events.projection import ResearchGraph
+from contracts.api import Approve, OptionalNote, Reject, RequiredNote
+from contracts.models import LLMRecord
 
 _SILENT_LABELS = frozenset({BUDGET_LABEL, REVIEW_LABEL})
 MENU_HELP = {
@@ -79,8 +82,14 @@ def _put(state: AgentState, *tracks: Track, **extra: Any) -> dict[str, Any]:
     return {"tracks": merged, **extra}
 
 
-def _add(track: Track, node: str, stage: Stage, tool: str | None = None) -> None:
-    track["steps"].append(Step(node=node, stage=stage, tool=tool, gates=None))
+def _add(
+    track: Track,
+    node: str,
+    stage: Stage,
+    tool: str | None = None,
+    call: dict[str, Any] | None = None,
+) -> None:
+    track["steps"].append(Step(node=node, stage=stage, tool=tool, gates=None, call=call))
 
 
 async def _decide(
@@ -103,40 +112,39 @@ async def _decide(
         )
 
 
-def _llm(ctx: AgentContext, decision: str, context: dict[str, Any], out: BaseModel) -> dict:
-    return {
-        "decision": decision,
-        "model": ctx.llm.model_id,
-        "context": context,
-        "output": out.model_dump(mode="json"),
-    }
+def _llm(ctx: AgentContext, decision: str, context: dict[str, Any], out: BaseModel) -> LLMRecord:
+    return llm_record(ctx.llm.model_id, decision, context, out)
 
 
-def _queue_review(ctx: AgentContext, state: AgentState, node_ids: list[str]) -> dict[str, Any]:
+def _queue_review(
+    ctx: AgentContext,
+    state: AgentState,
+    node_ids: list[str],
+    facts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The critic reviews every decision; in approval mode a human does too."""
     for node_id in node_ids:
-        ctx.checks.submit_critic(node_id)
+        ctx.checks.submit_critic(node_id, facts)
     update: dict[str, Any] = {"awaiting_critic": [*state["awaiting_critic"], *node_ids]}
     if state["mode"] == "approval":
         update["approval"] = [*state["approval"], *node_ids]
     return update
 
 
-def _replaces(rec: Recorder, track: Track, node_id: str) -> None:
-    if track["revising"]:
-        rec.edge(track["revising"], node_id, "revises")
-        track["revising"] = None
-    track["feedback"] = None
+def _replaces(track: Track) -> str | None:
+    """The node the next decision replaces (for its `revises` edge); clears the feedback."""
+    old, track["revising"], track["feedback"] = track["revising"], None, None
+    return old
 
 
 def _summary(graph: ResearchGraph, step: Step) -> dict[str, Any]:
-    out = graph.nodes[step["node"]]["tool_output"]
+    out = graph.nodes[step["node"]].tool.output
     extra = {k: v for k, v in out["extra"].items() if not isinstance(v, list | dict)}
     return {
         "node_id": step["node"],
         "tool": out["tool"],
         "status": out["status"],
-        "error": out["error"],
+        "reason": out["reason"],
         "n": out["n"],
         "effect": out["effect"],
         "ci": [out["ci_low"], out["ci_high"]],
@@ -146,9 +154,9 @@ def _summary(graph: ResearchGraph, step: Step) -> dict[str, Any]:
     }
 
 
-def _frozen_spec(graph: ResearchGraph, track: Track) -> dict[str, Any]:
+def _frozen_spec(track: Track) -> dict[str, Any]:
     """The spec the primary test ran with; every follow-up reuses it unchanged."""
-    return graph.nodes[latest(track, "primary")["node"]]["tool_call"]["args"]["spec"]
+    return latest(track, "primary")["call"]["args"]["spec"]
 
 
 def _slug(text: str, taken: set[str]) -> str:
@@ -161,7 +169,7 @@ def _slug(text: str, taken: set[str]) -> str:
 
 def _result_title(result: ToolResult) -> str:
     if result.status == "error":
-        return f"{result.tool}: error ({result.error})"
+        return f"{result.tool}: error ({result.reason})"
     if result.effect is None:
         return f"{result.tool}: n={result.n}"
     ci = f" [{result.ci_low:+.2f}, {result.ci_high:+.2f}]" if result.ci_low is not None else ""
@@ -173,10 +181,8 @@ def _result_title(result: ToolResult) -> str:
 
 async def intake(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     _, rec, _ = _deps(runtime)
-    rec.status(
-        status="running", question=state["question"], mode=state["mode"], budget=state["budget"]
-    )
-    return {"question_node": rec.node("question", state["question"], state="passed")}
+    rec.status("running")
+    return {"question_node": rec.node("question", state["question"], done=True)}
 
 
 async def premise(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -191,13 +197,11 @@ async def premise(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
         "premise_check",
         title,
         parents=[state["question_node"]],
-        rationale=out.rationale,
-        spec=out.claim.model_dump(mode="json") if out.claim else None,
-        missing_data=out.missing_data,
+        revises=_replaces(track),
         llm=_llm(ctx, "premise", context, out),
     )
-    _replaces(rec, track, node)
     track["spec_node"] = node
+    track["spec"] = out.claim.model_dump(mode="json") if out.claim else None
     _add(track, node, "spec")
     extra: dict[str, Any] = {}
     if out.testable:
@@ -212,14 +216,14 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     """D2: competing explanations for a premise that passed, or one revised after critique."""
     ctx, rec, graph = _deps(runtime)
     premise_track = state["tracks"][PREMISE]
-    claim = graph.nodes[premise_track["spec_node"]]["spec"]
+    claim = premise_track["spec"]
 
     if state["current"] is not None:
         track = _current(state)
         context = {
             "question": state["question"],
             "claim": claim,
-            "previous": graph.nodes[track["revising"] or track["spec_node"]]["spec"],
+            "previous": track["spec"],
             "feedback": track["feedback"],
         }
         out: HypothesisRevision = await _decide(
@@ -230,13 +234,11 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
             "hypothesis",
             spec.statement,
             parents=[premise_track["spec_node"]],
-            rationale=out.rationale,
-            spec=spec.model_dump(mode="json"),
-            kind=spec.kind,
+            revises=_replaces(track),
             llm=_llm(ctx, "revise_hypothesis", context, out),
         )
-        _replaces(rec, track, node)
         track["spec_node"] = node
+        track["spec"] = spec.model_dump(mode="json")
         _add(track, node, "spec")
         track["stage"] = "verdict" if track["kind"] == "chance" else "plan"
         return _put(state, track, **_queue_review(ctx, state, [node]))
@@ -255,13 +257,11 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
             "hypothesis",
             spec.statement,
             parents=[premise_track["spec_node"]],
-            rationale=out_set.rationale,
-            spec=spec.model_dump(mode="json"),
-            kind=spec.kind,
             llm=_llm(ctx, "hypothesize", context, out_set),
         )
         track = new_track(spec.id, spec.kind, "verdict" if spec.kind == "chance" else "plan")
         track["spec_node"] = node
+        track["spec"] = spec.model_dump(mode="json")
         _add(track, node, "spec")
         tracks.append(track)
         nodes.append(node)
@@ -272,9 +272,9 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
 
 async def plan_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """D3: pick the primary test. Its args freeze the spec used for every later test."""
-    ctx, rec, graph = _deps(runtime)
+    ctx, rec, _ = _deps(runtime)
     track = _current(state)
-    spec = graph.nodes[track["spec_node"]]["spec"]
+    spec = track["spec"]
     context = {"hypothesis": spec, "feedback": track["feedback"]}
     out: PlanDecision = await _decide(ctx, state, "plan_test", PlanDecision, context)
 
@@ -283,13 +283,10 @@ async def plan_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
         "test_plan",
         f"{out.tool} on {spec['metric']}: {spec['statement']}",
         parents=[track["spec_node"]],
-        rationale=out.rationale,
-        action=out.tool,
-        tool_call={"tool": out.tool, "args": {"spec": frozen}},
+        revises=_replaces(track),
         llm=_llm(ctx, "plan_test", context, out),
     )
-    _replaces(rec, track, node)
-    _add(track, node, "plan", out.tool)
+    _add(track, node, "plan", out.tool, {"tool": out.tool, "args": {"spec": frozen}})
     track["stage"] = "primary"
     return _put(state, track, **_queue_review(ctx, state, [node]))
 
@@ -298,7 +295,7 @@ async def choose_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     """D3b: the latest result passed its gates; pick the next follow-up or conclude."""
     ctx, rec, graph = _deps(runtime)
     track = _current(state)
-    frozen = _frozen_spec(graph, track)
+    frozen = _frozen_spec(track)
     menu = follow_up_menu(track)
     context = {
         "hypothesis": frozen,
@@ -309,71 +306,71 @@ async def choose_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     }
     out: NextTest = await _decide(ctx, state, "choose_test", next_test_schema(menu), context)
 
-    fields: dict[str, Any] = {"action": out.action}
+    call = None
     if out.action == "conclude":
         track["stage"] = "interpret"
     else:
-        test_id = graph.nodes[latest(track, "primary")["node"]]["tool_output"]["extra"].get(
-            "test_id"
-        )
-        fields["tool_call"] = {
-            "tool": out.action,
-            "args": _follow_up_args(out, frozen, test_id, track["id"]),
-        }
+        primary = graph.nodes[latest(track, "primary")["node"]]
+        test_id = primary.tool.output["extra"].get("test_id")
+        call = {"tool": out.action, "args": _follow_up_args(out, frozen, test_id, track["id"])}
         track["stage"] = "follow_up"
     node = rec.node(
         "test_plan",
         f"{out.action}: {out.rationale}",
         parents=[result_steps(track)[-1]["node"]],
-        rationale=out.rationale,
+        revises=_replaces(track),
         llm=_llm(ctx, "choose_test", context, out),
-        **fields,
     )
-    _replaces(rec, track, node)
-    _add(track, node, "choose", out.action)
+    _add(track, node, "choose", out.action, call)
     return _put(state, track, **_queue_review(ctx, state, [node]))
 
 
 def _follow_up_args(
     out: NextTest, frozen: dict[str, Any], test_id: str | None, track_id: str
 ) -> dict[str, Any]:
+    """Arguments in the shapes of Person A's tool schemas (`backend/tools/schemas.py`)."""
     if out.action == "out_of_sample":
         return {"test_id": test_id}
     if out.action == "market_test":
         side = "opp" if frozen["direction"] == "a_lt_b" else "team"
-        return {"test_id": test_id, "slice": frozen["group_a"], "side": side}
+        return {"slice": frozen["group_a"], "side": side}
     if out.action == "placebo":
-        return {"test_id": test_id, "slice": out.placebo_slice.model_dump(mode="json")}
-    return {"test_id": test_id, "hypothesis_id": track_id}  # holdout_confirm
+        return {"test_id": test_id, "placebo_slice": out.placebo_slice.model_dump(mode="json")}
+    return {"hypothesis_id": track_id}  # holdout_confirm
 
 
 async def execute_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """Run the tool the track's latest plan or choice asked for. No LLM; the gate runs async."""
-    ctx, rec, graph = _deps(runtime)
+    ctx, rec, _ = _deps(runtime)
     track = _current(state)
     stage = track["stage"]
 
     if track["id"] == PREMISE:
-        spec = graph.nodes[track["spec_node"]]["spec"]
-        tool, args, parent, frozen = "compare_groups", {"spec": spec}, track["spec_node"], spec
+        spec = track["spec"]
+        call, parent, frozen = (
+            {"tool": "compare_groups", "args": {"spec": spec}},
+            track["spec_node"],
+            spec,
+        )
     else:
-        decision = latest(track, "plan" if stage == "primary" else "choose")["node"]
-        call = graph.nodes[decision]["tool_call"]
-        tool, args, parent = call["tool"], call["args"], decision
-        frozen = args["spec"] if stage == "primary" else _frozen_spec(graph, track)
+        decision = latest(track, "plan" if stage == "primary" else "choose")
+        call, parent = decision["call"], decision["node"]
+        frozen = call["args"]["spec"] if stage == "primary" else _frozen_spec(track)
+    tool = call["tool"]
 
-    result = await asyncio.to_thread(ctx.tools.run, tool, args)
+    started = time.perf_counter()
+    result = await asyncio.to_thread(ctx.tools.run, tool, call["args"])
+    elapsed_ms = (time.perf_counter() - started) * 1000
     node = rec.node(
         "test_result",
         _result_title(result),
         parents=[parent],
-        tool_call={"tool": tool, "args": args},
-        tool_output=result.model_dump(mode="json"),
-        data_hash=result.slice_hash,
+        actor="tool",
+        tool=tool_record(result, elapsed_ms),
     )
     ctx.checks.submit_gate(node, result, frozen)
 
-    _add(track, node, stage, tool)
+    _add(track, node, stage, tool, call)
     track["stage"] = "gated" if track["id"] == PREMISE else "choose"
     if tool == "holdout_confirm":
         track["holdout_used"] = True
@@ -387,7 +384,7 @@ async def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
     """D4: read the gated results for one hypothesis, citing gate ids."""
     ctx, rec, graph = _deps(runtime)
     track = _current(state)
-    spec = _frozen_spec(graph, track)
+    spec = _frozen_spec(track)
     results = result_steps(track)
     failed = stopping_failures(track)
     choice = latest(track, "choose")
@@ -409,10 +406,9 @@ async def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
         "interpretation",
         out.summary,
         parents=[step["node"] for step in results],
-        rationale=out.rationale,
+        revises=_replaces(track),
         llm=_llm(ctx, "interpret", context, out),
     )
-    _replaces(rec, track, node)
     _add(track, node, "interpret")
     track["stage"] = "verdict"
     return _put(state, track, **_queue_review(ctx, state, [node]))
@@ -432,34 +428,36 @@ async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
         label = ctx.gate.verdict("chance", {}, competing)
     else:
         label = ctx.gate.verdict(track["kind"], gates, [])
+    contract = contract_verdict(label, gates)
 
     interpretation = latest(track, "interpret")
     primary = latest(track, "primary")
     parent = (interpretation or primary or {"node": track["spec_node"]})["node"]
-    fields: dict[str, Any] = {"verdict": label, "gates": gates, "track": track["id"]}
-    if label.startswith("Real"):
-        fields["explanation_status"] = "Mechanism plausible but untested"
+    title = f"{label}: {spec_node.title}"
 
     review: dict[str, Any] = {}
-    title = f"{label}: {spec_node['title']}"
     if state["exhausted"] or label in _SILENT_LABELS:
+        # Label set by rule; no narrative (budget or revision limit reached).
         node = rec.node(
             "verdict",
             title,
             parents=[parent],
-            state="passed",
-            rationale="Label set by rule; no narrative (budget or revision limit reached).",
-            **fields,
+            revises=_replaces(track),
+            actor="gate",
+            done=True,
+            verdict=contract,
         )
     else:
         context = {
             "question": state["question"],
-            "hypothesis": spec_node["title"],
+            "hypothesis": spec_node.title,
             "kind": track["kind"],
             "verdict": label,
             "gates": gates,
-            "missing_data": spec_node.get("missing_data"),
-            "interpretation": graph.nodes[interpretation["node"]]["llm"]["output"]
+            "missing_data": spec_node.llm.parsed_output.get("missing_data")
+            if spec_node.llm
+            else None,
+            "interpretation": graph.nodes[interpretation["node"]].llm.parsed_output
             if interpretation
             else None,
             "feedback": track["feedback"],
@@ -469,14 +467,14 @@ async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
             "verdict",
             title,
             parents=[parent],
-            rationale=out.rationale,
-            narrative=out.text,
+            revises=_replaces(track),
             llm=_llm(ctx, "narrate_verdict", context, out),
-            **fields,
+            verdict=contract,
         )
         _add(track, node, "verdict")
-        review = _queue_review(ctx, state, [node])
-    _replaces(rec, track, node)
+        review = _queue_review(ctx, state, [node], facts={"gates": gates})
+    if contract is not None:
+        rec.verdict(track["spec_node"], contract)
 
     if primary and track["id"] != PREMISE:
         held = all(gates.get(g) == "pass" for g in ("G2", "G3"))
@@ -497,7 +495,7 @@ async def report(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
             {
                 "track": track_id,
                 "kind": track["kind"],
-                "statement": graph.nodes[track["spec_node"]]["title"],
+                "statement": graph.nodes[track["spec_node"]].title,
                 "verdict": track["verdict"],
                 "verdict_node": track["verdict_node"],
                 "path": [track["verdict_node"], *graph.ancestors(track["verdict_node"])],
@@ -517,7 +515,8 @@ async def report(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
         "verdicts": rows,
         "budget": budget,
     }
-    rec.status(status="completed", report=result, budget=budget)
+    rec.budget(budget["llm_calls"], budget["tests"])
+    rec.status("completed")
     return {"report": result, "status": "completed", "budget": budget}
 
 
@@ -539,16 +538,17 @@ class ReviewAnswer(BaseModel):
 
 async def human_review(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """Approval mode: pause until a human approves or rejects the queued decision."""
-    ctx, rec, graph = _deps(runtime)
+    _, rec, graph = _deps(runtime)
     node_id = state["approval"][0]
+    if "awaiting_approval" not in graph.nodes[node_id].flags:  # re-runs from the top on resume
+        rec.mark(node_id, "awaiting_approval")
+        rec.status("awaiting_approval")
     node = graph.nodes[node_id]
-    if node["state"] != "awaiting_approval":  # this node re-runs from the top on resume
-        rec.update(node_id, state="awaiting_approval")
     request = {
         "node_id": node_id,
-        "type": node["type"],
-        "title": node["title"],
-        "checks": node["checks"],
+        "type": node.type,
+        "title": node.title,
+        "checks": [check.model_dump(mode="json") for check in node.checks],
     }
     while True:
         try:
@@ -557,23 +557,34 @@ async def human_review(state: AgentState, runtime: Runtime[AgentContext]) -> dic
         except ValidationError as exc:
             request = {**request, "error": str(exc)}
 
-    rec.intervention(answer.action, node_id, note=answer.note)
     approved = answer.action == "approve"
-    check = CheckResult(
-        node_id=node_id,
-        checker="human",
-        status="pass" if approved else "fail",
-        rationale=answer.note or "Approved.",
+    if approved:
+        rec.intervention(
+            Approve(type="approve", node_id=node_id, payload=OptionalNote(note=answer.note))
+        )
+    else:
+        rec.intervention(
+            Reject(type="reject", node_id=node_id, payload=RequiredNote(note=answer.note))
+        )
+    rec.check(
+        CheckResult(
+            node_id=node_id,
+            checker="human",
+            status="pass" if approved else "fail",
+            rationale=answer.note or "Approved.",
+        )
     )
-    ctx.log.append("check_result", check.model_dump(mode="json"))
+    if answer.note:
+        rec.annotate(node_id, answer.note)
+    rec.status("running")
     remaining = {**state, "approval": state["approval"][1:]}
     if approved:
-        rec.update(node_id, state="passed")
+        rec.mark(node_id, "passed", actor="human")
         return {"approval": remaining["approval"]}
     draft = Draft(remaining)
     draft.review(node_id, "fail", f"Human reviewer: {answer.note}", graph)
     for nid, node_state in draft.node_states:
-        rec.update(nid, state=node_state)
+        rec.mark(nid, node_state)
     return draft.changes()
 
 

@@ -12,6 +12,7 @@ from backend.agent.state import (
     new_track,
 )
 from backend.events.projection import ResearchGraph
+from contracts.models import Edge
 
 PRIMARY_PASS = {"G1": "pass", "G2": "pass", "G3": "pass", "G4": "pass"}
 
@@ -170,16 +171,8 @@ def test_approval_blocks_until_the_critic_lands_then_asks_the_human():
 
 def test_critic_concern_rewinds_the_track_and_taints_what_was_built_on_it():
     track = hypothesis("choose", SPEC, PLAN, PRIMARY)
-    graph = ResearchGraph(
-        edges={
-            "e": {
-                "id": "e",
-                "source": "test_plan-4",
-                "target": "test_result-5",
-                "type": "derives_from",
-            }
-        }
-    )
+    built_on_plan = Edge(id="e", source="test_result-5", target="test_plan-4", type="derives_from")
+    graph = ResearchGraph(edges={"e": built_on_plan})  # derives_from points child -> parent
     state = state_with(held_premise(), track, awaiting_critic=["test_plan-4"])
     draft = fold_checks(state, [critic("test_plan-4", "flag")], graph)
 
