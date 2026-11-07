@@ -1,0 +1,1419 @@
+{
+  "$defs": {
+    "AddHypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "add_hypothesis",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "default": null,
+          "title": "Node Id",
+          "type": "null"
+        },
+        "payload": {
+          "$ref": "#/$defs/HypothesisPayload"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "AddHypothesis",
+      "type": "object"
+    },
+    "Approve": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "approve",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/OptionalNote"
+        }
+      },
+      "required": [
+        "type",
+        "node_id"
+      ],
+      "title": "Approve",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_llm_calls": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Max Llm Calls",
+          "type": "integer"
+        },
+        "max_tests": {
+          "default": 40,
+          "minimum": 1,
+          "title": "Max Tests",
+          "type": "integer"
+        },
+        "max_depth": {
+          "default": 8,
+          "minimum": 1,
+          "title": "Max Depth",
+          "type": "integer"
+        }
+      },
+      "title": "Budget",
+      "type": "object"
+    },
+    "BudgetUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "budget_update",
+          "default": "budget_update",
+          "title": "Type",
+          "type": "string"
+        },
+        "llm_calls_used": {
+          "minimum": 0,
+          "title": "Llm Calls Used",
+          "type": "integer"
+        },
+        "tests_spent": {
+          "minimum": 0,
+          "title": "Tests Spent",
+          "type": "integer"
+        },
+        "depth": {
+          "minimum": 0,
+          "title": "Depth",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "llm_calls_used",
+        "tests_spent",
+        "depth"
+      ],
+      "title": "BudgetUpdated",
+      "type": "object"
+    },
+    "CheckRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "checker": {
+          "enum": [
+            "gate",
+            "critic",
+            "human"
+          ],
+          "title": "Checker",
+          "type": "string"
+        },
+        "gate_id": {
+          "anyOf": [
+            {
+              "enum": [
+                "G1",
+                "G2",
+                "G3",
+                "G4",
+                "G5",
+                "G6",
+                "G7"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gate Id"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "flag",
+            "fail"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "node_id",
+        "checker",
+        "status",
+        "severity",
+        "rationale"
+      ],
+      "title": "CheckRecord",
+      "type": "object"
+    },
+    "CheckResult": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "check_result",
+          "default": "check_result",
+          "title": "Type",
+          "type": "string"
+        },
+        "check": {
+          "$ref": "#/$defs/CheckRecord"
+        }
+      },
+      "required": [
+        "check"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "Contract": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Contract",
+      "type": "object"
+    },
+    "CreateRun": {
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "mode": {
+          "default": "live",
+          "enum": [
+            "live",
+            "approval"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "CreateRun",
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "derives_from",
+            "tests",
+            "supports",
+            "refutes",
+            "revises"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "target",
+        "type"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "EdgeCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "edge_created",
+          "default": "edge_created",
+          "title": "Type",
+          "type": "string"
+        },
+        "edge": {
+          "$ref": "#/$defs/Edge"
+        }
+      },
+      "required": [
+        "edge"
+      ],
+      "title": "EdgeCreated",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
+    "ErrorOccurred": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorOccurred",
+      "type": "object"
+    },
+    "ErrorResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "$ref": "#/$defs/ErrorDetail"
+        }
+      },
+      "required": [
+        "detail"
+      ],
+      "title": "ErrorResponse",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "actor": {
+          "enum": [
+            "orchestrator",
+            "tool",
+            "gate",
+            "critic",
+            "human",
+            "system"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "run_created",
+            "run_status",
+            "node_created",
+            "node_updated",
+            "edge_created",
+            "check_result",
+            "ledger_entry",
+            "verdict_computed",
+            "intervention",
+            "budget_update",
+            "mode_changed",
+            "error"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Node Id"
+        },
+        "payload": {
+          "discriminator": {
+            "mapping": {
+              "budget_update": "#/$defs/BudgetUpdated",
+              "check_result": "#/$defs/CheckResult",
+              "edge_created": "#/$defs/EdgeCreated",
+              "error": "#/$defs/ErrorOccurred",
+              "intervention": "#/$defs/InterventionRecorded",
+              "ledger_entry": "#/$defs/LedgerEntry",
+              "mode_changed": "#/$defs/ModeChanged",
+              "node_created": "#/$defs/NodeCreated",
+              "node_updated": "#/$defs/NodeUpdated",
+              "run_created": "#/$defs/RunCreated",
+              "run_status": "#/$defs/StatusChanged",
+              "verdict_computed": "#/$defs/VerdictComputed"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RunCreated"
+            },
+            {
+              "$ref": "#/$defs/StatusChanged"
+            },
+            {
+              "$ref": "#/$defs/NodeCreated"
+            },
+            {
+              "$ref": "#/$defs/NodeUpdated"
+            },
+            {
+              "$ref": "#/$defs/EdgeCreated"
+            },
+            {
+              "$ref": "#/$defs/CheckResult"
+            },
+            {
+              "$ref": "#/$defs/LedgerEntry"
+            },
+            {
+              "$ref": "#/$defs/VerdictComputed"
+            },
+            {
+              "$ref": "#/$defs/BudgetUpdated"
+            },
+            {
+              "$ref": "#/$defs/ModeChanged"
+            },
+            {
+              "$ref": "#/$defs/ErrorOccurred"
+            },
+            {
+              "$ref": "#/$defs/InterventionRecorded"
+            }
+          ],
+          "title": "Payload"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "ts",
+        "actor",
+        "type",
+        "payload"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "HumanAnnotation": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "note": {
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor_id",
+        "ts",
+        "note"
+      ],
+      "title": "HumanAnnotation",
+      "type": "object"
+    },
+    "HypothesisPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "statement": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement"
+      ],
+      "title": "HypothesisPayload",
+      "type": "object"
+    },
+    "InterventionAccepted": {
+      "additionalProperties": false,
+      "properties": {
+        "intervention_id": {
+          "title": "Intervention Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "accepted",
+          "default": "accepted",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "intervention_id"
+      ],
+      "title": "InterventionAccepted",
+      "type": "object"
+    },
+    "InterventionRecorded": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "intervention",
+          "default": "intervention",
+          "title": "Type",
+          "type": "string"
+        },
+        "intervention_id": {
+          "title": "Intervention Id",
+          "type": "string"
+        },
+        "request": {
+          "discriminator": {
+            "mapping": {
+              "add_hypothesis": "#/$defs/AddHypothesis",
+              "approve": "#/$defs/Approve",
+              "override": "#/$defs/Override",
+              "prune": "#/$defs/Prune",
+              "reject": "#/$defs/Reject",
+              "rerun": "#/$defs/Rerun",
+              "set_mode": "#/$defs/SetMode"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Prune"
+            },
+            {
+              "$ref": "#/$defs/Rerun"
+            },
+            {
+              "$ref": "#/$defs/Override"
+            },
+            {
+              "$ref": "#/$defs/Approve"
+            },
+            {
+              "$ref": "#/$defs/Reject"
+            },
+            {
+              "$ref": "#/$defs/SetMode"
+            },
+            {
+              "$ref": "#/$defs/AddHypothesis"
+            }
+          ],
+          "title": "Request"
+        }
+      },
+      "required": [
+        "intervention_id",
+        "request"
+      ],
+      "title": "InterventionRecorded",
+      "type": "object"
+    },
+    "LLMRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "raw_response": {
+          "title": "Raw Response",
+          "type": "string"
+        },
+        "parsed_output": {
+          "additionalProperties": true,
+          "title": "Parsed Output",
+          "type": "object"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "from_cache": {
+          "default": false,
+          "title": "From Cache",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "model_id",
+        "prompt",
+        "raw_response",
+        "parsed_output",
+        "rationale"
+      ],
+      "title": "LLMRecord",
+      "type": "object"
+    },
+    "LedgerEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ledger_entry",
+          "default": "ledger_entry",
+          "title": "Type",
+          "type": "string"
+        },
+        "test_id": {
+          "title": "Test Id",
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "tests_spent": {
+          "minimum": 0,
+          "title": "Tests Spent",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "test_id",
+        "hypothesis_id",
+        "tests_spent"
+      ],
+      "title": "LedgerEntry",
+      "type": "object"
+    },
+    "ModeChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "mode_changed",
+          "default": "mode_changed",
+          "title": "Type",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "live",
+            "approval"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "ModeChanged",
+      "type": "object"
+    },
+    "ModePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "live",
+            "approval"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "ModePayload",
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "question",
+            "premise_check",
+            "hypothesis",
+            "test_plan",
+            "test_result",
+            "interpretation",
+            "mechanism_prediction",
+            "verdict",
+            "human_note"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "lifecycle": {
+          "default": "proposed",
+          "enum": [
+            "proposed",
+            "running",
+            "checking",
+            "complete"
+          ],
+          "title": "Lifecycle",
+          "type": "string"
+        },
+        "check_outcome": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "passed",
+            "flagged",
+            "failed"
+          ],
+          "title": "Check Outcome",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "tainted",
+              "pruned",
+              "awaiting_approval",
+              "overridden",
+              "stale"
+            ],
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "title": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/CheckRecord"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "human": {
+          "items": {
+            "$ref": "#/$defs/HumanAnnotation"
+          },
+          "title": "Human",
+          "type": "array"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "type",
+        "created_at",
+        "title"
+      ],
+      "title": "Node",
+      "type": "object"
+    },
+    "NodeCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "node_created",
+          "default": "node_created",
+          "title": "Type",
+          "type": "string"
+        },
+        "node": {
+          "$ref": "#/$defs/Node"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "NodeCreated",
+      "type": "object"
+    },
+    "NodeUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "node_updated",
+          "default": "node_updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "node": {
+          "$ref": "#/$defs/Node"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "NodeUpdated",
+      "type": "object"
+    },
+    "OptionalNote": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "title": "OptionalNote",
+      "type": "object"
+    },
+    "Override": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "override",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/OverridePayload"
+        }
+      },
+      "required": [
+        "type",
+        "node_id",
+        "payload"
+      ],
+      "title": "Override",
+      "type": "object"
+    },
+    "OverridePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "minLength": 10,
+          "title": "Note",
+          "type": "string"
+        },
+        "check_id": {
+          "title": "Check Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note",
+        "check_id"
+      ],
+      "title": "OverridePayload",
+      "type": "object"
+    },
+    "Prune": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "prune",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/OptionalNote"
+        }
+      },
+      "required": [
+        "type",
+        "node_id"
+      ],
+      "title": "Prune",
+      "type": "object"
+    },
+    "Reject": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "reject",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/RequiredNote"
+        }
+      },
+      "required": [
+        "type",
+        "node_id",
+        "payload"
+      ],
+      "title": "Reject",
+      "type": "object"
+    },
+    "ReplayRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "log_file": {
+          "minLength": 1,
+          "title": "Log File",
+          "type": "string"
+        },
+        "speed": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "title": "Speed",
+          "type": "number"
+        }
+      },
+      "required": [
+        "log_file"
+      ],
+      "title": "ReplayRequest",
+      "type": "object"
+    },
+    "Report": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        },
+        "verdicts": {
+          "items": {
+            "$ref": "#/$defs/ReportRow"
+          },
+          "title": "Verdicts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "question",
+        "answer",
+        "verdicts"
+      ],
+      "title": "Report",
+      "type": "object"
+    },
+    "ReportRow": {
+      "additionalProperties": false,
+      "properties": {
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "title",
+        "verdict",
+        "path",
+        "summary"
+      ],
+      "title": "ReportRow",
+      "type": "object"
+    },
+    "RequiredNote": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "minLength": 10,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "title": "RequiredNote",
+      "type": "object"
+    },
+    "Rerun": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "rerun",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/Contract"
+        }
+      },
+      "required": [
+        "type",
+        "node_id"
+      ],
+      "title": "Rerun",
+      "type": "object"
+    },
+    "RunAccepted": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunAccepted",
+      "type": "object"
+    },
+    "RunCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "run_created",
+          "default": "run_created",
+          "title": "Type",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "live",
+            "approval"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "question",
+        "mode",
+        "budget"
+      ],
+      "title": "RunCreated",
+      "type": "object"
+    },
+    "SetMode": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "set_mode",
+          "title": "Type",
+          "type": "string"
+        },
+        "node_id": {
+          "default": null,
+          "title": "Node Id",
+          "type": "null"
+        },
+        "payload": {
+          "$ref": "#/$defs/ModePayload"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "SetMode",
+      "type": "object"
+    },
+    "StatusChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "run_status",
+          "default": "run_status",
+          "title": "Type",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "awaiting_approval",
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "StatusChanged",
+      "type": "object"
+    },
+    "ToolRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "args_hash": {
+          "title": "Args Hash",
+          "type": "string"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "data_slice_hash": {
+          "title": "Data Slice Hash",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tool_name",
+        "args",
+        "args_hash",
+        "output",
+        "data_slice_hash",
+        "seed",
+        "duration_ms"
+      ],
+      "title": "ToolRecord",
+      "type": "object"
+    },
+    "Verdict": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "enum": [
+            "Premise false",
+            "Untestable",
+            "Inconclusive",
+            "Inconclusive (budget)",
+            "Luck",
+            "Real but priced in",
+            "Real and beats market (provisional)"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "explanation_status": {
+          "default": "Mechanism plausible but untested",
+          "enum": [
+            "Mechanism supported",
+            "Mechanism tested and failed",
+            "Mechanism plausible but untested"
+          ],
+          "title": "Explanation Status",
+          "type": "string"
+        },
+        "holdout_failed": {
+          "default": false,
+          "title": "Holdout Failed",
+          "type": "boolean"
+        },
+        "human_overridden": {
+          "default": false,
+          "title": "Human Overridden",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "Verdict",
+      "type": "object"
+    },
+    "VerdictComputed": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verdict_computed",
+          "default": "verdict_computed",
+          "title": "Type",
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "verdict"
+      ],
+      "title": "VerdictComputed",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "event": {
+      "$ref": "#/$defs/Event"
+    },
+    "create_run": {
+      "$ref": "#/$defs/CreateRun"
+    },
+    "run_accepted": {
+      "$ref": "#/$defs/RunAccepted"
+    },
+    "intervention": {
+      "discriminator": {
+        "mapping": {
+          "add_hypothesis": "#/$defs/AddHypothesis",
+          "approve": "#/$defs/Approve",
+          "override": "#/$defs/Override",
+          "prune": "#/$defs/Prune",
+          "reject": "#/$defs/Reject",
+          "rerun": "#/$defs/Rerun",
+          "set_mode": "#/$defs/SetMode"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Prune"
+        },
+        {
+          "$ref": "#/$defs/Rerun"
+        },
+        {
+          "$ref": "#/$defs/Override"
+        },
+        {
+          "$ref": "#/$defs/Approve"
+        },
+        {
+          "$ref": "#/$defs/Reject"
+        },
+        {
+          "$ref": "#/$defs/SetMode"
+        },
+        {
+          "$ref": "#/$defs/AddHypothesis"
+        }
+      ],
+      "title": "Intervention"
+    },
+    "intervention_accepted": {
+      "$ref": "#/$defs/InterventionAccepted"
+    },
+    "replay": {
+      "$ref": "#/$defs/ReplayRequest"
+    },
+    "report": {
+      "$ref": "#/$defs/Report"
+    },
+    "error": {
+      "$ref": "#/$defs/ErrorResponse"
+    }
+  },
+  "required": [
+    "event",
+    "create_run",
+    "run_accepted",
+    "intervention",
+    "intervention_accepted",
+    "replay",
+    "report",
+    "error"
+  ],
+  "title": "Contracts",
+  "type": "object"
+}
