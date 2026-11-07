@@ -53,8 +53,9 @@ The directory layout follows `TASKS.md`; role ownership follows the addendum in
 contracts. The server includes typed run/intervention/report endpoints, an in-memory
 event log, WebSocket backfill/live streaming, and timed JSONL replay. Live run creation
 returns `503 agent_unavailable` until B supplies `AgentPort` to `create_app(agent=...)`.
-Statistical tools, durable storage, graph/report projection, and Gemini integration
-remain planned work. Replay reports currently return 409; replay streams graph events.
+Statistical tools, durable storage, and graph/report projection remain planned work;
+Gemini works from the agent CLI (`--llm gemini`) but not yet through the API.
+Replay reports currently return 409; replay streams graph events.
 
 See [contracts/README.md](contracts/README.md) for endpoint shapes, handoffs, schema
 generation, error semantics, and agent integration. Python contracts are authoritative;
@@ -85,7 +86,11 @@ pause on each decision and resume. Run it with the fake LLM (no API key needed):
 .\.venv\Scripts\python -m backend.agent --mode approval         # approve each decision
 .\.venv\Scripts\python -m backend.agent --out replays\fake.jsonl # save the event log
 .\.venv\Scripts\python -m backend.agent --tools mock            # Person A's mock tools
+.\.venv\Scripts\python -m backend.agent --llm gemini --tools mock # real Gemini decisions
 ```
+
+`--llm gemini` reads `GEMINI_API_KEY` and `GEMINI_MODEL` from `.env` and sends at most
+`GEMINI_RPM` (default 5) requests per minute, so a full run of about 35 calls takes ~7 minutes.
 
 A saved log is valid replay input: with the server running, `POST /replay` with
 `{"log_file":"fake.jsonl","speed":1}` streams the agent's graph to the UI.
@@ -109,3 +114,32 @@ use `npm run dev` for the integrated local workflow. There is no coverage thresh
 Keep API keys, local environments, dependencies, and generated data out of Git.
 See [plan.md](plan.md) for requirements, [TASKS.md](TASKS.md) for ownership, and
 [AGENTS.md](AGENTS.md) for contributor guidance. This is a research tool, not betting advice.
+
+## Research workspace MVP
+
+The frontend now includes collapsible session tabs, a downward Dagre research graph,
+Markdown node inspection, evidence charts, and bidirectional WebSocket controls.
+Start the backend and frontend using the quick-start commands above. Leave **Scripted
+ demo** checked to try the full interaction without API keys. Demo results are synthetic;
+submit any question to watch the scripted branching sequence, pause/resume it, or redirect
+from the active step. A redirect retains the interrupted node and adds a labeled branch.
+Uncheck demo to use the injected `AgentPort`; the default server still returns 503 for live runs.
+
+Only one session can run at a time in this single-process MVP. Pause it before starting
+or resuming another. Session IDs are stored in this browser; graph evidence reloads from
+the server log on refresh. The server log is in memory and disappears on backend restart.
+If saved sessions no longer exist, use **Clear local session list** in the disconnect overlay.
+Any dropped socket blocks the workspace with **Refresh the page to reconnect**; there is
+no automatic retry. Production must proxy both HTTP and WebSockets under `/api`.
+
+Frontend verification:
+
+```powershell
+cd frontend
+npm run test
+npm run build
+```
+
+The frontend uses React, Tailwind CSS, React Flow, Dagre, react-markdown with GFM,
+and Recharts. Node selection opens the inspector; its Evidence tab accepts chart data
+from `node.tool.output.charts` and always exposes the original tool JSON.

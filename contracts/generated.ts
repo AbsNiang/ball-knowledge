@@ -43,7 +43,7 @@ export type MaxLlmCalls = number;
 export type MaxTests = number;
 export type MaxDepth = number;
 export type Type2 = "run_status";
-export type Status = "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
+export type Status = "queued" | "running" | "paused" | "awaiting_approval" | "completed" | "failed" | "cancelled";
 export type Type3 = "node_created";
 export type Id = string;
 export type RunId1 = string;
@@ -103,6 +103,7 @@ export type Type6 = "edge_created";
 export type Id2 = string;
 export type Source = string;
 export type Target = string;
+export type Label1 = string | null;
 export type Type7 = "derives_from" | "tests" | "supports" | "refutes" | "revises";
 export type Type8 = "check_result";
 export type Type9 = "ledger_entry";
@@ -122,7 +123,7 @@ export type Code = string;
 export type Message = string;
 export type Type14 = "intervention";
 export type InterventionId = string;
-export type Request = Prune | Rerun | Override | Approve | Reject | SetMode | AddHypothesis;
+export type Request = Prune | Rerun | Override | Approve | Reject | SetMode | AddHypothesis | Pause | Resume | Redirect;
 export type Type15 = "prune";
 export type NodeId2 = string;
 export type Note1 = string | null;
@@ -143,10 +144,17 @@ export type Mode2 = "live" | "approval";
 export type Type21 = "add_hypothesis";
 export type NodeId8 = null;
 export type Statement = string;
+export type Type22 = "pause";
+export type NodeId9 = null;
+export type Type23 = "resume";
+export type NodeId10 = null;
+export type Type24 = "redirect";
+export type NodeId11 = string;
 export type Question1 = string;
 export type Mode3 = "live" | "approval";
 export type RunId2 = string;
-export type Intervention = Prune | Rerun | Override | Approve | Reject | SetMode | AddHypothesis;
+export type Intervention =
+  Prune | Rerun | Override | Approve | Reject | SetMode | AddHypothesis | Pause | Resume | Redirect;
 export type InterventionId1 = string;
 export type Status2 = "accepted";
 export type LogFile = string;
@@ -275,6 +283,7 @@ export interface Edge {
   id: Id2;
   source: Source;
   target: Target;
+  label?: Label1;
   type: Type7;
 }
 export interface CheckResult {
@@ -363,6 +372,21 @@ export interface AddHypothesis {
 }
 export interface HypothesisPayload {
   statement: Statement;
+}
+export interface Pause {
+  type: Type22;
+  node_id?: NodeId9;
+  payload?: Contract;
+}
+export interface Resume {
+  type: Type23;
+  node_id?: NodeId10;
+  payload?: Contract;
+}
+export interface Redirect {
+  type: Type24;
+  node_id: NodeId11;
+  payload: HypothesisPayload;
 }
 export interface CreateRun {
   question: Question1;

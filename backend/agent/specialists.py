@@ -10,7 +10,7 @@ import asyncio
 import copy
 import re
 import time
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, get_args
 
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
@@ -29,6 +29,7 @@ from backend.agent.schemas import (
     Narrative,
     NextTest,
     PlanDecision,
+    PrimaryTest,
     ReportDraft,
     next_test_schema,
 )
@@ -48,6 +49,7 @@ from backend.agent.state import (
     track_gates,
 )
 from backend.events.projection import ResearchGraph
+from backend.tools.registry import TOOL_REGISTRY
 from contracts.api import Approve, OptionalNote, Reject, RequiredNote
 from contracts.models import LLMRecord
 
@@ -60,6 +62,20 @@ MENU_HELP = {
     "placebo": "Run the same test where the effect should be absent; set placebo_slice.",
     "holdout_confirm": "Confirm once on the sealed holdout seasons (G7). Cannot be repeated.",
     "conclude": "Stop testing this hypothesis. Skipped tests can only weaken its verdict.",
+}
+# What each primary test does (Person A's registry text, kept in sync) and when to pick it.
+_WHEN_TO_USE = {
+    "compare_groups": "Use it for a difference between two groups of team-games, which fits "
+    "most explanations.",
+    "regress": "Use it when other factors must be held fixed: every confounder hypothesis, with "
+    "the confounders as controls.",
+    "persistence": "Use it for team-level claims that may be regression to the mean: does a "
+    "team's metric this season carry into the next?",
+    "market_test": "Use it when the claim is about beating the betting line itself.",
+}
+_REGISTRY_TEXT = {tool["name"]: tool["description"] for tool in TOOL_REGISTRY}
+PRIMARY_TOOL_HELP = {
+    name: f"{_REGISTRY_TEXT[name]} {_WHEN_TO_USE[name]}" for name in get_args(PrimaryTest)
 }
 
 
@@ -224,6 +240,7 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
             "question": state["question"],
             "claim": claim,
             "previous": track["spec"],
+            "tools": PRIMARY_TOOL_HELP,
             "feedback": track["feedback"],
         }
         out: HypothesisRevision = await _decide(
@@ -247,6 +264,7 @@ async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict
         "question": state["question"],
         "claim": claim,
         "premise_result": _summary(graph, latest(premise_track, "primary")),
+        "tools": PRIMARY_TOOL_HELP,
     }
     out_set: HypothesisSet = await _decide(ctx, state, "hypothesize", HypothesisSet, context)
     taken, tracks, nodes = set(state["tracks"]), [], []
@@ -275,7 +293,7 @@ async def plan_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
     ctx, rec, _ = _deps(runtime)
     track = _current(state)
     spec = track["spec"]
-    context = {"hypothesis": spec, "feedback": track["feedback"]}
+    context = {"hypothesis": spec, "tools": PRIMARY_TOOL_HELP, "feedback": track["feedback"]}
     out: PlanDecision = await _decide(ctx, state, "plan_test", PlanDecision, context)
 
     frozen = {**spec, "primary_test": out.tool, "controls": list(out.controls)}
@@ -358,6 +376,7 @@ async def execute_test(state: AgentState, runtime: Runtime[AgentContext]) -> dic
         frozen = call["args"]["spec"] if stage == "primary" else _frozen_spec(track)
     tool = call["tool"]
 
+    print(f"CALLING TOOL {tool.upper()} FOR {track['id'].upper()}")  # DEBUG
     started = time.perf_counter()
     result = await asyncio.to_thread(ctx.tools.run, tool, call["args"])
     elapsed_ms = (time.perf_counter() - started) * 1000

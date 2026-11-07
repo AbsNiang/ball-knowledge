@@ -108,3 +108,43 @@ npm --prefix frontend run contracts
 Commit `schema.json` and `generated.ts` with model changes. `events.ts` re-exports the
 generated event type for existing consumers. HTTP OpenAPI is at `/openapi.json` and
 interactive documentation at `/docs`; WebSocket messages use the same `Event` model.
+
+## Research workspace transport additions
+
+`POST /demo/runs` accepts `CreateRun` and starts a clearly labeled synthetic demo through
+the real event stream. It never calls an LLM or statistical tool. Live creation remains
+`POST /runs`. A single-process lock prevents starting/resuming a second active run.
+Paused sessions may coexist. This is workspace-wide enforcement, not multi-user isolation.
+
+The event socket also accepts:
+
+```json
+{"request_id":"client-generated-id","command":{"type":"pause","node_id":null,"payload":{}}}
+```
+
+Commands use the existing `Intervention` union, extended with `pause`, `resume` (run
+commands) and `redirect` (`node_id` required, payload `{ "statement": "new question" }`).
+Replies are `{type:"command_ack",request_id,intervention_id,status:"accepted"}` or
+`{type:"command_error",request_id,detail:{message,...}}`, separate from sequenced events.
+The same commands are accepted over the existing HTTP intervention endpoint.
+Acknowledgement means accepted; run/node events determine actual UI state. `RunStatus`
+now includes `paused`; edges accept optional `label` text. Python models, JSON Schema,
+and generated TypeScript are updated together.
+
+Agent integration must implement pause/resume and redirect: emit `paused` only after
+execution has stopped advancing, preserve the checkpoint, and resume from it. For a
+running external model/tool call, cancellation or boundary pausing is the agent's
+responsibility; the frontend cannot suspend an external model mid-token. Redirect must
+validate the active node, preserve prior nodes, and emit the new branch with a decision
+label. The scripted adapter implements these semantics for demonstration.
+
+Evidence charts use optional `node.tool.output.charts` entries:
+
+```json
+{"type":"bar","title":"Effect by sample","xKey":"sample","yKey":"effect","data":[{"sample":"Explore","effect":-2.4}]}
+```
+
+`type` supports `bar` and `line`. Invalid charts are skipped; raw tool JSON remains
+inspectable. Gate outcomes and verdicts are rendered from backend events, never inferred
+from chart values. Layout reverses child-to-parent `derives_from`/`revises` edges for
+presentation while retaining the original records. Failed/pruned nodes are never removed.
