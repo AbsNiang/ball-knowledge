@@ -12,4 +12,3 @@ export interface ResearchEvent {
     | 'run_status';
   data: Record<string, unknown>;
 }
-

@@ -16,4 +16,3 @@ class Event(BaseModel):
         "node_created", "node_updated", "edge_created", "check_result", "intervention", "run_status"
     ]
     data: dict[str, Any]
-

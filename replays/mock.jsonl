@@ -3,4 +3,3 @@
 {"seq":3,"run_id":"mock-b2b","ts":"2026-01-01T00:00:02Z","kind":"node_created","data":{"id":"verdict","type":"verdict","title":"Inconclusive — fixture only","state":"proposed","parent_ids":["premise"],"rationale":"Connect the data and statistical tools before drawing conclusions."}}
 {"seq":4,"run_id":"mock-b2b","ts":"2026-01-01T00:00:03Z","kind":"edge_created","data":{"id":"premise-verdict","source":"premise","target":"verdict","type":"derives_from"}}
 {"seq":5,"run_id":"mock-b2b","ts":"2026-01-01T00:00:04Z","kind":"run_status","data":{"status":"completed","fixture":true}}
-

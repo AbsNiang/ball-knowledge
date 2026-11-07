@@ -18,4 +18,3 @@ def test_fixture_is_ordered_and_contract_valid():
     assert [event.seq for event in events] == list(range(1, len(events) + 1))
     assert len({event.run_id for event in events}) == 1
     assert events[-1].data["status"] == "completed"
-

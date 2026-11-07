@@ -22,4 +22,3 @@ def fixture_events() -> list[Event]:
         for line in REPLAY_PATH.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-
