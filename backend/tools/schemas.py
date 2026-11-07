@@ -1,9 +1,9 @@
-"""PROVISIONAL tool input and output models, until `contracts/` has the agreed versions.
+"""Tool input and output models. Person A owns these (see `contracts/README.md`).
 
 `SliceSpec`, `Filter`, `HypothesisSpec` and `MechanismSpec` follow plan.md v2 section 6.5.
-`ToolResult` follows TASKS.md, plus `status`, `reason` and `args_hash`, which v2 section 7 needs
-but the TASKS.md shape doesn't have. Once agreed, these should move to `contracts/` and this
-module should re-export them, so the tools and B's agent code don't change.
+`ToolResult` follows TASKS.md, plus `status`, `reason` and `args_hash`, which v2 section 7 needs.
+B's agent sends arguments built from its own copies in `backend/agent/schemas.py`, so a change
+here must stay compatible with those, and goes through `ToolRecord.output` to C as JSON.
 """
 
 from typing import Any, Literal
@@ -12,6 +12,20 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SliceSplit = Literal["explore", "validate", "special"]  # holdout is deliberately not allowed
 Metric = Literal["ats_margin", "ats_cover", "margin", "win", "total_over", "roi"]
+Control = Literal[
+    "spread",
+    "is_home",
+    "rest_days",
+    "opp_rest_days",
+    "b2b",
+    "opp_b2b",
+    "travel_km",
+    "tz_shift",
+    "altitude_m",
+    "games_into_season",
+    "rolling_ats_10",
+    "rolling_margin_10",
+]
 FilterColumn = Literal[
     "season",
     "team",
@@ -74,10 +88,10 @@ class HypothesisSpec(StrictModel):
     kind: Literal["premise", "explanation", "confounder", "chance", "market"]
     metric: Metric
     group_a: SliceSpec
-    group_b: SliceSpec | Literal["complement"]
+    group_b: SliceSpec | Literal["complement"] = "complement"
     direction: Literal["a_gt_b", "a_lt_b", "two_sided"]
     primary_test: Literal["compare_groups", "regress", "persistence", "market_test"]
-    controls: list[str] = []
+    controls: list[Control] = []
     mechanism_prediction: MechanismSpec | None = None
 
 
@@ -131,6 +145,7 @@ class OutOfSampleArgs(StrictModel):
 class PersistenceArgs(StrictModel):
     metric: Metric
     entity: Literal["team"] = "team"
+    split: SliceSplit = "explore"
 
 
 class MarketTestArgs(StrictModel):

@@ -101,7 +101,7 @@ def test_get_frame_refuses_anything_but_public_splits(raw_dir, tmp_path, split):
 
 
 def test_no_module_other_than_store_reaches_the_sealed_rows():
-    allowed = {REPO_BACKEND / "data" / "store.py"}  # add holdout_confirm's module when it exists
+    allowed = {REPO_BACKEND / "data" / "store.py", REPO_BACKEND / "tools" / "holdout.py"}
     for path in REPO_BACKEND.rglob("*.py"):
         if "tests" in path.parts or path in allowed:
             continue

@@ -51,7 +51,8 @@ def valid_calls() -> dict[str, dict]:
 
 
 @pytest.fixture(autouse=True)
-def clean_state():
+def clean_state(monkeypatch):
+    monkeypatch.setenv("WHACK_TOOLS", "mock")
     reset_mock_state()
 
 
