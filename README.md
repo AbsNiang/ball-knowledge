@@ -85,3 +85,32 @@ use `npm run dev` for the integrated local workflow. There is no coverage thresh
 Keep API keys, local environments, dependencies, and generated data out of Git.
 See [plan.md](plan.md) for requirements, [TASKS.md](TASKS.md) for ownership, and
 [AGENTS.md](AGENTS.md) for contributor guidance. This is a research tool, not betting advice.
+
+## Research workspace MVP
+
+The frontend now includes collapsible session tabs, a downward Dagre research graph,
+Markdown node inspection, evidence charts, and bidirectional WebSocket controls.
+Start the backend and frontend using the quick-start commands above. Leave **Scripted
+ demo** checked to try the full interaction without API keys. Demo results are synthetic;
+submit any question to watch the scripted branching sequence, pause/resume it, or redirect
+from the active step. A redirect retains the interrupted node and adds a labeled branch.
+Uncheck demo to use the injected `AgentPort`; the default server still returns 503 for live runs.
+
+Only one session can run at a time in this single-process MVP. Pause it before starting
+or resuming another. Session IDs are stored in this browser; graph evidence reloads from
+the server log on refresh. The server log is in memory and disappears on backend restart.
+If saved sessions no longer exist, use **Clear local session list** in the disconnect overlay.
+Any dropped socket blocks the workspace with **Refresh the page to reconnect**; there is
+no automatic retry. Production must proxy both HTTP and WebSockets under `/api`.
+
+Frontend verification:
+
+```powershell
+cd frontend
+npm run test
+npm run build
+```
+
+The frontend uses React, Tailwind CSS, React Flow, Dagre, react-markdown with GFM,
+and Recharts. Node selection opens the inspector; its Evidence tab accepts chart data
+from `node.tool.output.charts` and always exposes the original tool JSON.

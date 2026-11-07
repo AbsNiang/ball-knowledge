@@ -12,7 +12,7 @@ class Contract(BaseModel):
 
 Mode = Literal["live", "approval"]
 Actor = Literal["orchestrator", "tool", "gate", "critic", "human", "system"]
-RunStatus = Literal["queued", "running", "awaiting_approval", "completed", "failed", "cancelled"]
+RunStatus = Literal["queued", "running", "paused", "awaiting_approval", "completed", "failed", "cancelled"]
 
 
 class Budget(Contract):
@@ -107,4 +107,5 @@ class Edge(Contract):
     id: str
     source: str
     target: str
+    label: str | None = None
     type: Literal["derives_from", "tests", "supports", "refutes", "revises"]

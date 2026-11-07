@@ -79,8 +79,35 @@ class AddHypothesis(Contract):
     payload: HypothesisPayload
 
 
+class Pause(Contract):
+    type: Literal["pause"]
+    node_id: None = None
+    payload: Contract = Field(default_factory=Contract)
+
+
+class Resume(Contract):
+    type: Literal["resume"]
+    node_id: None = None
+    payload: Contract = Field(default_factory=Contract)
+
+
+class Redirect(Contract):
+    type: Literal["redirect"]
+    node_id: str
+    payload: HypothesisPayload
+
+
 Intervention = Annotated[
-    Prune | Rerun | Override | Approve | Reject | SetMode | AddHypothesis,
+    Prune
+    | Rerun
+    | Override
+    | Approve
+    | Reject
+    | SetMode
+    | AddHypothesis
+    | Pause
+    | Resume
+    | Redirect,
     Field(discriminator="type"),
 ]
 
