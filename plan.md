@@ -86,7 +86,7 @@ Tests:
 | `market_test(slice, side)` | ATS cover rate vs the **52.38% break-even at -110**, ROI backtest, over/under vs the closing total |
 | `power(n, effect)` | Minimum detectable effect, which flags underpowered tests |
 | `placebo(test_id)` | The same test on a period or group where the effect shouldn't exist (e.g. the bubble effect tested on non-bubble months) |
-
+r
 Metrics: `home_win`, `margin`, `ats_cover` (= margin + spread > 0; push if = 0), `total_over`, `roi`.
 
 ### FR5: Verification layer (asynchronous)
@@ -785,7 +785,7 @@ evals/                 # LangSmith datasets and evaluators
 - **[Q6]** Judging criteria weighting (technical depth vs demo vs impact)? Decides time on the FDR proof versus polish.
 
 ## 16. Risks carried over from v1 (kept, condensed)
-Premise-assumes-pattern (mitigated by 8.3); forking paths (ledger, 7.3); holdout leakage (6.3, `holdout_confirm`); look-ahead bias (6.2); real != profitable (G6); LLM checking LLM (gate authority, 9.4); explainable != causal (mechanism rule, 9.2); async inconsistency (taint, 5.4); non-independence (game-level blocks, 7.3); small-n slices (G1, `placebo`); spread sign bugs (6.1); live-demo rate limits (gateway, replay); out-of-scope questions (*Untestable*); hidden overrides (9.4); responsible gambling (UI disclaimer); model availability (config, backup key).confirm the next decision blocks until it's approved.
+Premise-assumes-pattern (mitigated by 8.3); forking paths (ledger, 7.3); holdout leakage (6.3, `holdout_confirm`); look-ahead bias (6.2); real != profitable (G6); LLM checking LLM (gate authority, 9.4); explainable != causal (mechanism rule, 9.2); async inconsistency (taint, 5.4); non-independence (game-level blocks, 7.3); small-n slices (G1, `placebo`); spread sign bugs (6.1); live-demo rate limits (gateway, replay); out-of-scope questions (*Untestable*); hidden overrides (9.4); peresponsible gambling (UI disclaimer); model availability (config, backup key).confirm the next decision blocks until it's approved.
 - **Replay test:** a recorded log replays to an identical final graph and report.
 
 ## 9. Still open (decide early, not blocking)

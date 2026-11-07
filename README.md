@@ -13,6 +13,11 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn backend.api.main:app --reload
 ```
 
+The ASGI app is defined in `backend/api/main.py`, so use `backend.api.main:app`.
+The older `backend.main:app` command is incorrect. Run the command from the
+repository root; virtual environment activation is optional when using the explicit
+Python path above.
+
 In a second terminal:
 
 ```powershell
