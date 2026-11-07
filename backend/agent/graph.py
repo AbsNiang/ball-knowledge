@@ -1,0 +1,91 @@
+"""The orchestrator as a LangGraph stateful router.
+
+    START -> intake -> router <-> {premise, hypothesize, plan_test, execute_test, choose_test,
+                                   interpret, verdict, wait_checks, human_review}
+                       router  -> report -> END
+
+`AgentRun` owns one run: its event log, background checks and checkpointed LangGraph thread.
+"""
+
+import uuid
+from typing import Any
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
+
+from backend.agent.context import AgentContext
+from backend.agent.ports import Gate, Tools
+from backend.agent.router import ROUTES, router
+from backend.agent.specialists import SPECIALISTS, intake
+from backend.agent.state import AgentState, Mode, initial_state
+from backend.events.store import EventLog
+from backend.llm.gateway import LLMGateway
+
+# Each router hop is two supersteps; budgets bound the LLM work, this bounds everything else.
+RECURSION_LIMIT = 2_000
+
+
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
+    builder = StateGraph(AgentState, context_schema=AgentContext)
+    builder.add_node("intake", intake)
+    builder.add_node("router", router, destinations=ROUTES)
+    for name, node in SPECIALISTS.items():
+        builder.add_node(name, node)
+        builder.add_edge(name, END if name == "report" else "router")
+    builder.add_edge(START, "intake")
+    builder.add_edge("intake", "router")
+    return builder.compile(checkpointer=checkpointer or InMemorySaver())
+
+
+class AgentRun:
+    def __init__(
+        self,
+        question: str,
+        *,
+        llm: LLMGateway,
+        tools: Tools,
+        gate: Gate,
+        mode: Mode = "live",
+        budget: dict[str, int] | None = None,
+        run_id: str | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
+    ) -> None:
+        self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
+        self.log = EventLog(self.run_id)
+        self.context = AgentContext.create(llm=llm, tools=tools, gate=gate, log=self.log)
+        self.graph = build_graph(checkpointer)
+        self.config = {
+            "configurable": {"thread_id": self.run_id},
+            "recursion_limit": RECURSION_LIMIT,
+        }
+        self._initial = initial_state(self.run_id, question, mode, budget)
+        self.pending_review: dict[str, Any] | None = None
+
+    async def start(self) -> dict[str, Any] | None:
+        """Run until the report is written, or until a decision needs human review."""
+        return await self._invoke(self._initial)
+
+    async def resume(self, action: str, note: str | None = None) -> dict[str, Any] | None:
+        """Answer the pending review ('approve' or 'reject' with a 10+ character note)."""
+        return await self._invoke(Command(resume={"action": action, "note": note}))
+
+    def set_mode(self, mode: Mode) -> None:
+        """Takes effect at the router's next step (plan.md §9.5)."""
+        self.context.inbox.append({"type": "set_mode", "mode": mode})
+
+    @property
+    def state(self) -> AgentState:
+        return self.graph.get_state(self.config).values
+
+    async def _invoke(self, payload: Any) -> dict[str, Any] | None:
+        try:
+            out = await self.graph.ainvoke(payload, self.config, context=self.context)
+        except Exception as exc:
+            self.log.append("run_status", {"status": "failed", "error": repr(exc)})
+            raise
+        interrupts = out.get("__interrupt__") or []
+        self.pending_review = interrupts[0].value if interrupts else None
+        return self.pending_review

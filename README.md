@@ -44,10 +44,29 @@ replays/        Mock and future recorded JSONL event logs
 ```
 
 The layout follows `TASKS.md`; it takes precedence over alternate directory names
-in `plan.md`. Only the health endpoint, fixture endpoint, event envelope, and mock
-graph are implemented. The other backend packages are placeholders. Full node/tool
-contracts, WebSocket streaming, interventions, statistical tools, and Gemini integration
-remain planned work. Coordinate contract changes across backend and frontend owners.
+in `plan.md`. Implemented so far: the health and fixture endpoints, the event envelope,
+the mock graph, an in-memory event log with its graph projection (`backend/events/`), and
+the agent loop (`backend/agent/`). The agent runs against a scripted fake LLM and stub
+tools/gate (`backend/agent/stubs.py`) until the real tools, gate and Gemini gateway land.
+Node/tool contracts, WebSocket streaming and the API routes remain planned work.
+Coordinate contract changes across backend and frontend owners.
+
+## Agent loop
+
+The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
+finished gate/critic checks into state and dispatches one specialist per step
+(`premise`, `hypothesize`, `plan_test`, `execute_test`, `choose_test`, `interpret`,
+`verdict`, `report`). When a test passes its gates, the LLM chooses the next follow-up
+(`out_of_sample`, `market_test`, `placebo`, or `holdout_confirm` once G1-G6 pass) or
+concludes. When a gate fails, testing that hypothesis stops and the failure decides its
+verdict; G6 (market) only locks the holdout. State is checkpointed, so approval mode can
+pause on each decision and resume. Run it with the fake LLM (no API key needed):
+
+```powershell
+.\.venv\Scripts\python -m backend.agent                         # live mode
+.\.venv\Scripts\python -m backend.agent --mode approval         # approve each decision
+.\.venv\Scripts\python -m backend.agent --out replays\fake.jsonl # save the event log
+```
 
 ## Checks and build
 
