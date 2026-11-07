@@ -198,6 +198,7 @@ Every verdict also carries an **explanation status**. *Mechanism supported* mean
 | 10–14 | **Integrate end to end on one question** | | |
 | 14–18 | Market/placebo tools, BH ledger | Approval mode, taint propagation, report | Report view, approval UI, charts |
 | 18–22 | Known-answer runs, FDR test | Record replay logs | Replay mode, polish |
+
 | 22–24 | **Pitch prep and rehearsal on a replay** | | |
 With only 2 people, B also takes the inspector and report view, and C's charts are cut to the minimum set.
 
