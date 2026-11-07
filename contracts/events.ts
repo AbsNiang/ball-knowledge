@@ -1,14 +1,2 @@
-// Keep this envelope aligned with contracts/events.py.
-export interface ResearchEvent {
-  seq: number;
-  run_id: string;
-  ts: string;
-  kind:
-    | 'node_created'
-    | 'node_updated'
-    | 'edge_created'
-    | 'check_result'
-    | 'intervention'
-    | 'run_status';
-  data: Record<string, unknown>;
-}
+// Generated from Python contracts through schema.json; do not duplicate wire models here.
+export type { Event as ResearchEvent } from './generated';

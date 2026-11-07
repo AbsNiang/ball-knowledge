@@ -202,6 +202,36 @@ Every verdict also carries an **explanation status**. *Mechanism supported* mean
 | 22–24 | **Pitch prep and rehearsal on a replay** | | |
 With only 2 people, B also takes the inspector and report view, and C's charts are cut to the minimum set.
 
+### 7.1 Role addendum: A = Data and stats, B = Agent, C = Product
+
+This addendum supersedes the ownership split in the table above and in `TASKS.md`.
+It also applies to the later v2 tool-library section 7; statistical ownership stays with A.
+
+- **Person A: Data and stats.** Builds the NBA dataset by joining game results with closing odds. Owns statistical tools, gates, the global testing ledger, and deterministic verdict assignment. No LLM work. A defines dataset and tool-specific result schemas separately.
+- **Person B: Agent.** Turns questions into hypotheses, chooses tests, and interprets results. Owns the orchestrator, critic, and shared Gemini gateway. B uses A's tools and preserves A's verdict labels; it must not calculate replacement statistics or upgrade failed gates.
+- **Person C: Product.** Owns everything users see and the connection to the agent: event log, FastAPI/WS API, live graph, inspector, report view/export, and replay. C also owns `contracts/` and coordinates schema changes with A and B.
+
+#### Handoffs that allow parallel work
+
+| Boundary | Producer → consumer | Agreement |
+|---|---|---|
+| Statistical execution | A → B | Whitelisted tool registry, validated arguments, deterministic outputs, gate/check records, verdicts. A supplies tool stubs and owns the dataset schema. |
+| Research events | B → C | B calls `EventSink.emit(actor, payload, node_id)` with typed records; C assigns `run_id`, monotonic `seq`, and timestamp, then stores and publishes the event. |
+| Run control | C → B | `AgentPort.start`, `intervene`, and `report` in `contracts/ports.py`. B enqueues work promptly and owns agent task lifetime; it validates approval state, overrides (G7 cannot be overridden), pruning, revisions, and taint propagation. |
+| Human interaction | Frontend → C → B | The existing `/runs` and intervention endpoints accept typed commands. A `202` acknowledges acceptance, not completion; events describe subsequent effects. The browser never writes directly to storage. |
+| Evidence and reports | A/B → C | A supplies statistical evidence and verdict labels; B supplies narrative and report paths; C stores/streams records, renders charts and report views, and exports Markdown. C never infers verdicts from raw statistics. |
+
+`contracts/models.py`, `api.py`, and `events.py` define the product-facing Pydantic models;
+`contracts/README.md` documents the endpoints and compatibility rules. Use the later
+section 10 envelope (`actor`, `type`, `node_id`, `payload`), replacing the initial
+`kind`/`data` prototype. `contracts/` is the schema location, replacing `shared/schemas`
+in the later layout. Generated JSON Schema and TypeScript types let C build against
+fixtures while A and B build independently. Coordinate breaking changes before merging.
+
+The initial FastAPI skeleton uses a single-process, in-memory log. C must add durable
+append-only storage and deterministic graph/report projection; B must connect its agent
+adapter. Replay never calls Gemini. A remains responsible for dataset shape and tool I/O.
+
 ---
 
 ## 8. Verification (how we'll know it works)
