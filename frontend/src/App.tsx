@@ -22,18 +22,24 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
-  const nodes: Node[] = events.filter((event) => event.kind === 'node_created')
-    .map((event, index) => ({
-      id: String(event.data.id),
+  const nodes: Node[] = events.flatMap((event, index) => {
+    const payload = event.payload;
+    if (payload.type !== 'node_created') return [];
+    return [{
+      id: payload.node.id,
       position: { x: 80, y: index * 170 },
-      data: { label: String(event.data.title) },
-    }));
-  const edges: Edge[] = events.filter((event) => event.kind === 'edge_created')
-    .map((event) => ({
-      id: String(event.data.id),
-      source: String(event.data.source),
-      target: String(event.data.target),
-    }));
+      data: { label: payload.node.title },
+    }];
+  });
+  const edges: Edge[] = events.flatMap((event) => {
+    const payload = event.payload;
+    if (payload.type !== 'edge_created') return [];
+    return [{
+      id: payload.edge.id,
+      source: payload.edge.source,
+      target: payload.edge.target,
+    }];
+  });
 
   return (
     <main>

@@ -13,6 +13,11 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn backend.api.main:app --reload
 ```
 
+The ASGI app is defined in `backend/api/main.py`, so use `backend.api.main:app`.
+The older `backend.main:app` command is incorrect. Run the command from the
+repository root; virtual environment activation is optional when using the explicit
+Python path above.
+
 In a second terminal:
 
 ```powershell
@@ -43,11 +48,23 @@ frontend/src/   React + TypeScript + React Flow
 replays/        Mock and future recorded JSONL event logs
 ```
 
-The layout follows `TASKS.md`; it takes precedence over alternate directory names
-in `plan.md`. Only the health endpoint, fixture endpoint, event envelope, and mock
-graph are implemented. The other backend packages are placeholders. Full node/tool
-contracts, WebSocket streaming, interventions, statistical tools, and Gemini integration
-remain planned work. Coordinate contract changes across backend and frontend owners.
+The directory layout follows `TASKS.md`; role ownership follows the addendum in
+`plan.md` section 7.1: A owns data/stats, B owns the agent, and C owns product/API and
+contracts. The server includes typed run/intervention/report endpoints, an in-memory
+event log, WebSocket backfill/live streaming, and timed JSONL replay. Live run creation
+returns `503 agent_unavailable` until B supplies `AgentPort` to `create_app(agent=...)`.
+Statistical tools, durable storage, graph/report projection, and Gemini integration
+remain planned work. Replay reports currently return 409; replay streams graph events.
+
+See [contracts/README.md](contracts/README.md) for endpoint shapes, handoffs, schema
+generation, error semantics, and agent integration. Python contracts are authoritative;
+JSON Schema and TypeScript are generated from them. Coordinate changes with all owners.
+
+To try replay without an agent, `POST /replay` with
+`{"log_file":"mock.jsonl","speed":1}`, then connect to
+`ws://127.0.0.1:8000/runs/{run_id}/events` using the returned ID. Events remain available
+at `GET /runs/{run_id}/events`. Use a single server process; the development log resets
+on restart.
 
 ## Checks and build
 
