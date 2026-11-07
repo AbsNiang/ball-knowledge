@@ -26,9 +26,10 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. API documentation is at http://127.0.0.1:8000/docs.
-The Vite development server proxies `/api` to the backend. The starter loads
-`replays/mock.jsonl`; it performs no statistical tests or LLM calls and needs no API key.
+Open http://127.0.0.1:5173. API documentation is at http://127.0.0.1:8000/docs.
+Keep both terminals running. The Vite development server proxies HTTP and WebSockets
+under `/api` to the backend. Scripted demo needs no API key. Unchecking it runs the
+research agent using `LLM_MODE` from the server environment or `.env` (default `fake`).
 Run the backend from the checkout so the fixture file is available.
 
 ## Structure
@@ -51,10 +52,11 @@ replays/        Mock and future recorded JSONL event logs
 The directory layout follows `TASKS.md`; role ownership follows the addendum in
 `plan.md` section 7.1: A owns data/stats, B owns the agent, and C owns product/API and
 contracts. The server includes typed run/intervention/report endpoints, an in-memory
-event log, WebSocket backfill/live streaming, and timed JSONL replay. Live run creation
-returns `503 agent_unavailable` until B supplies `AgentPort` to `create_app(agent=...)`.
-Statistical tools, durable storage, and graph/report projection remain planned work;
-Gemini works from the agent CLI (`--llm gemini`) but not yet through the API.
+event log, WebSocket backfill/live streaming, and timed JSONL replay. The default app
+connects `AgentService` to `POST /runs`, streaming the standalone agent's events and
+exposing its reports. `create_app()` without an injected agent remains available for
+isolated API tests. Durable API storage remains planned work. The API agent uses the
+CLI's default synthetic stub tools/gates; its results are not validated NBA findings.
 Replay reports currently return 409; replay streams graph events.
 
 See [contracts/README.md](contracts/README.md) for endpoint shapes, handoffs, schema
@@ -71,8 +73,8 @@ on restart.
 
 The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools/gate
 (`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. It writes
-`contracts/events.py` events but is not yet connected to `AgentPort`, so live API runs still
-return 503. The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
+`contracts/events.py` events and connects to FastAPI through `backend/api/agent.py`.
+The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
 finished gate/critic checks into state and dispatches one specialist per step
 (`premise`, `hypothesize`, `plan_test`, `execute_test`, `choose_test`, `interpret`,
 `verdict`, `report`). When a test passes its gates, the LLM chooses the next follow-up
@@ -110,7 +112,9 @@ use `npm run dev` for the integrated local workflow. There is no coverage thresh
 
 ## Configuration and plans
 
-`.env.example` documents reserved gateway settings; this starter does not load them.
+`.env.example` documents gateway settings. The CLI and API agent load `.env`; existing
+environment variables take precedence. `LLM_MODE=fake` uses scripted decisions without
+network calls. `LLM_MODE=gemini` requires `GEMINI_API_KEY` and `GEMINI_MODEL` on the server.
 Keep API keys, local environments, dependencies, and generated data out of Git.
 See [plan.md](plan.md) for requirements, [TASKS.md](TASKS.md) for ownership, and
 [AGENTS.md](AGENTS.md) for contributor guidance. This is a research tool, not betting advice.
@@ -123,14 +127,25 @@ Start the backend and frontend using the quick-start commands above. Leave **Scr
  demo** checked to try the full interaction without API keys. Demo results are synthetic;
 submit any question to watch the scripted branching sequence, pause/resume it, or redirect
 from the active step. A redirect retains the interrupted node and adds a labeled branch.
-Uncheck demo to use the injected `AgentPort`; the default server still returns 503 for live runs.
+Uncheck demo to run the configured research agent. Pause takes effect at the next router
+boundary after the current step finishes; resume continues that run. Redirect is currently
+supported only by Scripted demo. Approval/rejection is supported through the API for
+agent runs created in approval mode; the current UI starts runs in live mode.
 
 Only one session can run at a time in this single-process MVP. Pause it before starting
 or resuming another. Session IDs are stored in this browser; graph evidence reloads from
 the server log on refresh. The server log is in memory and disappears on backend restart.
-If saved sessions no longer exist, use **Clear local session list** in the disconnect overlay.
-Any dropped socket blocks the workspace with **Refresh the page to reconnect**; there is
-no automatic retry. Production must proxy both HTTP and WebSockets under `/api`.
+Sessions confirmed missing by the backend are removed from the browser list with an
+explanation. Other sessions stay intact. Temporary disconnects retry automatically from
+the last applied event, up to five times with backoff; failed attempts offer **Retry
+connection**. Commands are never resent automatically. A heartbeat detects connections
+left open by a proxy after the backend stops. Production must proxy HTTP and WebSockets
+under `/api`.
+
+For local connection troubleshooting, open http://127.0.0.1:5173/api/health; it should
+return `{"status":"ok"}`. Connection refused on port 5173 means Vite is not running.
+A proxy error with FastAPI stopped means the backend must be restarted. To use a different
+backend port, set `$env:WHACK_API_TARGET="http://127.0.0.1:8001"` before `npm run dev`.
 
 Frontend verification:
 
@@ -138,7 +153,13 @@ Frontend verification:
 cd frontend
 npm run test
 npm run build
+npm run test:integration
 ```
+
+The integration test starts temporary Vite/FastAPI servers on free ports, uses the fake
+LLM, and checks streaming, controls, reconnects, reports, and backend restarts. It uses
+the repository `.venv` Python; override with `WHACK_TEST_PYTHON` if needed. Node's built-in
+WebSocket client is enabled for this test; no browser or external API key is needed.
 
 The frontend uses React, Tailwind CSS, React Flow, Dagre, react-markdown with GFM,
 and Recharts. Node selection opens the inspector; its Evidence tab accepts chart data

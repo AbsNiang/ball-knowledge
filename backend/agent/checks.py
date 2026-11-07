@@ -55,6 +55,12 @@ class CheckRunner:
         ]
         await asyncio.gather(*tasks)
 
+    async def aclose(self) -> None:
+        tasks = [task for group in self._tasks.values() for task in group]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     def _spawn(self, node_id: str, checker: str, coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.create_task(coro, name=f"{checker}:{node_id}")
         self._tasks.setdefault(node_id, []).append(task)

@@ -1,5 +1,6 @@
 """Per-run dependencies passed to every LangGraph node as `runtime.context` (never checkpointed)."""
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +10,12 @@ from backend.events.store import EventLog
 from backend.llm.gateway import LLMGateway
 
 
+def _running() -> asyncio.Event:
+    event = asyncio.Event()
+    event.set()
+    return event
+
+
 @dataclass
 class AgentContext:
     llm: LLMGateway
@@ -16,6 +23,7 @@ class AgentContext:
     gate: Gate
     log: EventLog
     checks: CheckRunner
+    running: asyncio.Event = field(default_factory=_running)
     inbox: list[dict[str, Any]] = field(default_factory=list)
     """Interventions waiting for the router's next step, such as {'type': 'set_mode', ...}."""
 

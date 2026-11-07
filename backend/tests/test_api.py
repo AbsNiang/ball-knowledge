@@ -5,12 +5,12 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from backend.api.main import app, create_app
+from backend.api.main import create_app
 from contracts.api import Report
 from contracts.events import Event
 from contracts.export_schema import Contracts
 
-client = TestClient(app)
+client = TestClient(create_app())
 
 
 def test_health():
@@ -242,3 +242,12 @@ def test_demo_websocket_pause_redirect_and_retained_history():
                 if message.get("type") == "command_error":
                     assert message["request_id"] == "invalid-1"
                     break
+
+
+def test_heartbeat_is_not_an_intervention_or_evidence_event():
+    with TestClient(create_app(FakeAgent())) as api:
+        run_id = api.post("/runs", json={"question": "Why?"}).json()["run_id"]
+        with api.websocket_connect(f"/runs/{run_id}/events?from_seq=3") as ws:
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+        assert len(api.get(f"/runs/{run_id}/events").json()) == 2

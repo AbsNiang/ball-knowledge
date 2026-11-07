@@ -1,4 +1,4 @@
-"""C's API skeleton. Inject B's AgentPort using create_app(agent=...)."""
+"""FastAPI HTTP/WS API with an injectable AgentPort and a scripted demo."""
 
 import asyncio
 import json
@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.responses import PlainTextResponse
 from pydantic import TypeAdapter, ValidationError
 
+from backend.api.agent import AgentService, AgentUnavailableError
 from backend.api.demo import DemoAgent
 from backend.events.memory import MemoryEventLog, RunEventSink
 from contracts.api import (
@@ -71,6 +72,8 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
         for task in replay_tasks | demo.tasks:
             task.cancel()
         await asyncio.gather(*replay_tasks, *demo.tasks, return_exceptions=True)
+        if close_agent := getattr(agent, "aclose", None):
+            await close_agent()
 
     app = FastAPI(
         title="Whack",
@@ -121,6 +124,9 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
         await sink.emit("system", RunCreated(**request.model_dump()))
         try:
             await runtime.start(run_id, request, sink)
+        except AgentUnavailableError as exc:
+            await sink.emit("system", StatusChanged(status="failed"))
+            fail(503, "agent_unavailable", str(exc))
         except Exception:
             await sink.emit("system", StatusChanged(status="failed"))
             raise
@@ -183,6 +189,9 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
                             "detail": {"message": "Invalid JSON"},
                         }
                     )
+                    continue
+                if isinstance(message, dict) and message.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
                     continue
                 request_id = message.get("request_id") if isinstance(message, dict) else None
                 try:
@@ -278,4 +287,4 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app(agent=AgentService())

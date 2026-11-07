@@ -304,7 +304,11 @@ def _go(
 
 async def router(state: AgentState, runtime: Runtime[AgentContext]) -> Command:
     ctx = runtime.context
+    # Pause between steps; let an in-flight tool/check finish without losing evidence.
     rec = Recorder(ctx.log)
+    if not ctx.running.is_set():
+        rec.status("paused")
+        await ctx.running.wait()
 
     mode = state["mode"]
     for message in ctx.take_inbox():

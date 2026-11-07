@@ -3,7 +3,7 @@ export interface Session { id: string; question: string; demo: boolean; status: 
 export const newSession = (id: string, question: string, demo: boolean): Session => ({id, question, demo, status:'queued', seq:0, nodes:{}, edges:{}});
 export function reduceEvent(s: Session, e: Event): Session {
   if (e.run_id !== s.id || e.seq <= s.seq) return s;
-  if (e.seq !== s.seq + 1) throw new Error('The event stream has a gap. Refresh to reload.');
+  if (e.seq !== s.seq + 1) throw new Error('The event stream has a gap. Retry the connection to reload missing events.');
   const next = {...s, seq:e.seq, nodes:{...s.nodes}, edges:{...s.edges}};
   const p = e.payload;
   switch(p.type) {

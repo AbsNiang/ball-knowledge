@@ -16,8 +16,9 @@ role addendum in `plan.md` section 7.1.
 - Browser → C: HTTP commands and WebSocket subscription. The browser does not write to
   a database. C owns storage, transport, graph/report projection and rendering.
 
-The unconnected skeleton returns `503` for live run creation; fixtures/replay work without
-B. The memory log is for one worker only, resets on restart and is not durable. Do not use
+The default app injects `backend.api.agent.AgentService`. Calling `create_app()` without
+an agent still returns `503` for live run creation; fixtures/replay work without an agent.
+The memory log is for one worker only, resets on restart and is not durable. Do not use
 multiple Uvicorn workers until C supplies shared durable storage and subscriptions.
 
 For example, B publishes a complete node snapshot through the supplied run-scoped sink:
@@ -131,10 +132,21 @@ Acknowledgement means accepted; run/node events determine actual UI state. `RunS
 now includes `paused`; edges accept optional `label` text. Python models, JSON Schema,
 and generated TypeScript are updated together.
 
-Agent integration must implement pause/resume and redirect: emit `paused` only after
-execution has stopped advancing, preserve the checkpoint, and resume from it. For a
+Transport liveness uses `{ "type": "ping" }` and `{ "type": "pong" }` frames outside
+the sequenced event log. The browser sends a ping every 15 seconds and reconnects if
+there is no pong within 5 seconds. Handshakes time out after 8 seconds. Unknown-run
+errors remove only that saved session; other errors and event gaps remain visible.
+
+The default agent adapter forwards the standalone log in order through `EventSink`,
+skipping its duplicate creation/intervention envelopes because the API assigns those.
+It supports pause/resume, approve/reject, and set-mode. Unsupported commands return
+409; redirect remains demo-only. It uses the CLI's default stub tools/gates and the
+configured fake/Gemini gateway. No event model or generated contract changed.
+
+Agent pause/resume must emit `paused` only after the current step has stopped advancing,
+preserve the checkpoint, and resume from it. For a
 running external model/tool call, cancellation or boundary pausing is the agent's
-responsibility; the frontend cannot suspend an external model mid-token. Redirect must
+responsibility; the frontend cannot suspend an external model mid-token. Redirect implementations must
 validate the active node, preserve prior nodes, and emit the new branch with a decision
 label. The scripted adapter implements these semantics for demonstration.
 
