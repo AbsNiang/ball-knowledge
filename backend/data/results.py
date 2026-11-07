@@ -40,6 +40,8 @@ def _season_start_from_game_id(game_id: str) -> int:
 def _finalise(frame: pd.DataFrame) -> pd.DataFrame:
     """Keep real games in the study period and add the derived columns."""
     frame = frame.dropna(subset=["home_pts", "away_pts", "home", "away"]).copy()
+    # Cancelled games can be listed 0-0, such as BOS-IND on 2013-04-16. They were never played.
+    frame = frame[(frame["home_pts"] > 0) | (frame["away_pts"] > 0)]
     frame = frame[frame["game_id"].str[2].isin(_KEPT_GAME_TYPES)]
     starts = frame["game_id"].map(_season_start_from_game_id)
     frame = frame[starts >= FIRST_SEASON_START].copy()
@@ -93,17 +95,44 @@ def load_nba_api_gamelog(path: Path) -> pd.DataFrame:
 
 
 def pull_nba_api_gamelog(start_years: range, out_path: Path) -> None:
-    """Download game logs with `nba_api` and save them for `load_nba_api_gamelog`."""
-    from nba_api.stats.endpoints import leaguegamelog  # optional, only needed to pull
+    """Download game logs with `nba_api` and save them for `load_nba_api_gamelog`.
 
+    stats.nba.com is slow and throttles bursts, so each page is retried with back-off, calls are
+    spaced out, and every page is cached next to `out_path`. A failed run can simply be rerun and
+    picks up where it stopped.
+    """
+    cache = out_path.parent / "gamelog_pages"
+    cache.mkdir(parents=True, exist_ok=True)
     pages = []
     for start_year in start_years:
         for season_type in ("Regular Season", "Playoffs", "PlayIn"):
+            page = cache / f"{season_label(start_year)} {season_type}.csv"
+            if not page.exists():
+                _fetch_gamelog_page(season_label(start_year), season_type).to_csv(
+                    page, index=False
+                )
+            pages.append(pd.read_csv(page, dtype={"GAME_ID": str}))
+    pd.concat(pages, ignore_index=True).to_csv(out_path, index=False)
+
+
+def _fetch_gamelog_page(season: str, season_type: str, attempts: int = 5) -> pd.DataFrame:
+    """Fetch one season-type page, retrying with growing waits."""
+    import time
+
+    from nba_api.stats.endpoints import leaguegamelog  # optional, only needed to pull
+
+    for attempt in range(1, attempts + 1):
+        time.sleep(1.5)  # keep below the site's burst limit
+        try:
             log = leaguegamelog.LeagueGameLog(
-                season=season_label(start_year),
+                season=season,
                 season_type_all_star=season_type,
                 player_or_team_abbreviation="T",
+                timeout=90,
             )
-            pages.append(log.get_data_frames()[0])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.concat(pages, ignore_index=True).to_csv(out_path, index=False)
+            return log.get_data_frames()[0]
+        except Exception:  # network errors vary; give up after the last attempt
+            if attempt == attempts:
+                raise
+            time.sleep(10 * attempt)
+    raise AssertionError("unreachable")

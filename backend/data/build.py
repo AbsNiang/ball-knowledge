@@ -1,6 +1,7 @@
 """Build the dataset from raw downloads.
 
-Put the raw files here, then run this from the repo root:
+Download the raw files with `python -m backend.data.fetch`, or put them here by hand, then run
+this from the repo root:
 
     backend/data/raw/results/games.csv        Kaggle dataset, or
     backend/data/raw/results/gamelog.csv      saved nba_api game log

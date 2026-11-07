@@ -135,6 +135,17 @@ def test_lauga_loader_drops_preseason_old_seasons_and_duplicates(tmp_path):
     assert list(games["is_playoffs"]) == [False, True]
 
 
+def test_cancelled_game_listed_zero_zero_is_dropped(tmp_path):
+    path = tmp_path / "games.csv"
+    pd.DataFrame(
+        [
+            lauga_row(21201214, "2013-04-16", BOS, MIA, home_pts=0, away_pts=0),
+            lauga_row(21201215, "2013-04-16", MIA, BOS),
+        ]
+    ).to_csv(path, index=False)
+    assert list(load_lauga_games(path)["game_id"]) == ["0021201215"]
+
+
 def test_lauga_loader_keeps_the_seattle_franchise_under_okc(tmp_path):
     path = tmp_path / "games.csv"
     pd.DataFrame([lauga_row(20700001, "2007-11-01", OKC, BOS)]).to_csv(path, index=False)
