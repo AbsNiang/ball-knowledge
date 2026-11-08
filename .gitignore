@@ -13,8 +13,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
-backend/data/raw/
-backend/data/processed/
+# backend/data/raw/
+# backend/data/processed/
 .codex/
 .claude/
 replays/*
