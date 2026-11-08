@@ -28,6 +28,15 @@ This check creates synthetic sessions, checks assets, HTTP and WebSocket routing
 pause/resume, redirect, cursor reconnect, and completion/report generation through
 the fake agent. It requires the frontend development dependencies and an idle app.
 Set `WHACK_SMOKE_URL` to the HTTPS Railway URL to check the deployed service.
+Use supported Node 22.12+ for this check. To use the pinned Node version in Docker:
+
+```powershell
+docker build --target frontend-build -t whack:checks .
+docker run --rm -e WHACK_SMOKE_URL=http://host.docker.internal:8000 whack:checks npm run test:hosted
+```
+
+The deployment branch is `deploy/railway-demo`; select it as the Railway service
+source branch. Changes can be reviewed and tested there before merging into `main`.
 
 Deployment uses `LLM_MODE=fake`, `LANGSMITH_TRACING=false`, and `PORT=8000`.
 No Gemini key is needed. Sessions, evidence, and checkpoints are in memory and

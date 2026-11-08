@@ -45,3 +45,31 @@ def test_production_requires_frontend(tmp_path):
         TestClient(create_production_app(create_app(), tmp_path)),
     ):
         pass
+
+
+def test_production_rejects_invalid_inputs_and_preserves_cursor(tmp_path):
+    """Exercise malformed input boundaries through the actual production mount."""
+    import random
+
+    (tmp_path / "index.html").write_text("Whack")
+    rng = random.Random(42)
+    with TestClient(create_production_app(create_app(), tmp_path)) as client:
+        for _ in range(30):
+            token = "".join(rng.choices("abcdef0123456789", k=24))
+            assert client.get(f"/api/{token}").status_code == 404
+            assert client.get(f"/assets/{token}").status_code == 404
+        for body in ({}, {"question": ""}, {"question": "a" * 4001}, {"mode": "invalid"}):
+            assert client.post("/api/demo/runs", json=body).status_code == 422
+        run = client.post("/api/demo/runs", json={"question": "Cursor check"}).json()["run_id"]
+        client.post(f"/api/runs/{run}/interventions", json={"type": "pause"})
+        events = client.get(f"/api/runs/{run}/events").json()
+        cursor = events[-1]["seq"]
+        with client.websocket_connect(f"/api/runs/{run}/events?from_seq={cursor}") as socket:
+            assert socket.receive_json() == events[-1]
+            socket.send_json({"type": "ping"})
+            assert socket.receive_json() == {"type": "pong"}
+            socket.send_text("not json")
+            assert socket.receive_json()["type"] == "command_error"
+        for cursor in (0, -1):
+            with client.websocket_connect(f"/api/runs/{run}/events?from_seq={cursor}") as socket:
+                assert socket.receive_json()["detail"]["code"] == "invalid_cursor"
