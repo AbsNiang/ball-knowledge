@@ -8,6 +8,7 @@ BREAKEVEN = 0.5238  # 110/210, the win rate needed to break even at -110
 
 SESOI_POINTS = 1.0  # smallest effect of interest for margin metrics
 SESOI_RATE = 0.03  # smallest effect of interest for binary and ROI metrics
+SESOI_CORRELATION = 0.10  # persistence: smallest season-to-season correlation of interest
 
 SEED = 1729
 N_PERMUTATIONS = 10_000

@@ -6,22 +6,24 @@ import time
 from fastapi.testclient import TestClient
 
 from backend.agent.graph import AgentRun
-from backend.agent.stubs import StubGate, StubTools, b2b_script
+from backend.agent.stubs import StubTools, b2b_script
 from backend.api.agent import AgentService, AgentUnavailableError
 from backend.api.main import create_app
+from backend.gate.gates import StatsGate
 from backend.llm.fake import FakeLLM
 from contracts.api import Report
 from contracts.events import Event
 
 
 def factory(run_id, request):
+    tools = StubTools()
     return AgentRun(
         request.question,
         run_id=run_id,
         mode=request.mode,
         llm=FakeLLM(b2b_script),
-        tools=StubTools(),
-        gate=StubGate(),
+        tools=tools,
+        gate=StatsGate(tools.run),
     )
 
 
@@ -76,12 +78,13 @@ def test_agent_pause_resume_over_websocket_and_unsupported_redirect():
             return await super().structured(*args, **kwargs)
 
     def slow_factory(run_id, request):
+        tools = StubTools()
         return AgentRun(
             request.question,
             run_id=run_id,
             llm=SlowFake(b2b_script),
-            tools=StubTools(),
-            gate=StubGate(),
+            tools=tools,
+            gate=StatsGate(tools.run),
         )
 
     service = AgentService(slow_factory)

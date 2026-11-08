@@ -56,7 +56,7 @@ event log, WebSocket backfill/live streaming, and timed JSONL replay. The defaul
 connects `AgentService` to `POST /runs`, streaming the standalone agent's events and
 exposing its reports. `create_app()` without an injected agent remains available for
 isolated API tests. Durable API storage remains planned work. The API agent uses the
-CLI's default synthetic stub tools/gates; its results are not validated NBA findings.
+CLI's default synthetic stub tools, judged by the real gate; its results are not validated NBA findings.
 Replay reports currently return 409; replay streams graph events.
 
 See [contracts/README.md](contracts/README.md) for endpoint shapes, handoffs, schema
@@ -71,8 +71,10 @@ on restart.
 
 ## Agent loop
 
-The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools/gate
-(`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. It writes
+The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools
+(`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. Results are judged by
+the stats gate (`backend/gate/`: G1-G7, the run's test ledger, and the verdict table), which
+re-runs the G4 multiple-testing correction over the whole ledger before the report. It writes
 `contracts/events.py` events and connects to FastAPI through `backend/api/agent.py`.
 The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
 finished gate/critic checks into state and dispatches one specialist per step
