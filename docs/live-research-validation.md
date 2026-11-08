@@ -25,6 +25,17 @@ rather than claiming one universal closing line. The NBA independently confirms 
 Games 3 and 5 were excluded because the archive and that book's closing lines differ.
 Push handling is covered separately by deterministic table tests.
 
+## Hosted acceptance result
+
+Run `5dc71a50-c9f4-42ed-b484-25e23d590739` completed 2026-11-08 on commit `30084d1`
+(branch `feat/live-research`) with `gemini-3.5-flash-lite` and dataset `c20e8402ba6f6c85`.
+The 168 events are sequence-contiguous; it used 28 of 60 model calls and 7 of 12 tests.
+Statistical provenance was real (`mock=false`) for `compare_groups`, `define_slice`,
+`out_of_sample`, `market_test` and `regress`; the report returned HTTP 200 and pause/resume
+plus stream reconnect passed. Web search returned HTTP 429, so the run has no grounded
+sources; statistical conclusions do not depend on them, and web is context-only.
+Full artifact: `docs/live-run-result.json`.
+
 ## Rollout
 
 Previous Railway deployment: 32cf6bd6-dbb1-4ba7-9576-eb6c4d8b2694, branch deploy/railway-demo.
