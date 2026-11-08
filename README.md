@@ -2,6 +2,43 @@
 
 NBA research assistant with deterministic statistical checks and an inspectable research graph.
 
+## Hosting
+
+The Railway project is [whack](https://railway.com/project/d5cd55e4-f2ed-47f5-88bd-5c686c909d21).
+The production entrypoint serves React and `/api` HTTP/WebSockets on one origin.
+The Docker image pins Linux runtime dependencies in `requirements-runtime.txt`,
+builds the frontend with `npm ci`, and runs one Uvicorn worker as a non-root user.
+Railway uses one replica and `/api/health` for deployment health checks.
+
+Build and launch locally with Docker Desktop's Linux engine running:
+
+```powershell
+docker build -t whack:local .
+docker run --rm -p 8000:8000 -e PORT=8000 -e LLM_MODE=fake whack:local
+```
+
+Open http://localhost:8000. To exercise the production container or hosted URL:
+
+```powershell
+$env:WHACK_SMOKE_URL="http://localhost:8000"
+npm --prefix frontend run test:hosted
+```
+
+This check creates synthetic sessions, checks assets, HTTP and WebSocket routing,
+pause/resume, redirect, cursor reconnect, and completion/report generation through
+the fake agent. It requires the frontend development dependencies and an idle app.
+Set `WHACK_SMOKE_URL` to the HTTPS Railway URL to check the deployed service.
+
+Deployment uses `LLM_MODE=fake`, `LANGSMITH_TRACING=false`, and `PORT=8000`.
+No Gemini key is needed. Sessions, evidence, and checkpoints are in memory and
+are lost on restart/deploy. One non-replay run may be active globally. Synthetic
+tools/gates do not produce validated NBA research. Finish active sessions before
+deploying. To roll back, select the previous successful deployment in Railway,
+restore compatible variables, and repeat the hosted check; sessions are not restored.
+Trial credit is consumed by running compute; stop the service when the demo is no
+longer needed and monitor remaining credit in Railway Billing. No paid extras are
+required. See [HOSTING_PLAN.md](HOSTING_PLAN.md) for later persistence and access work.
+
 ## Quick start
 
 Requires Python 3.12+ and Node.js 20.19+ (or Node.js 22.12+).

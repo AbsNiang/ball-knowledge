@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
+    "test:hosted": "node --experimental-websocket --test tests/hosted.test.mjs",
     "test:integration": "node --experimental-websocket --test tests/integration/*.test.mjs"
   },
   "dependencies": {
