@@ -14,7 +14,7 @@ RUN python -m pip install --no-cache-dir -r requirements-runtime.txt
 COPY pyproject.toml README.md ./
 COPY backend/ backend/
 COPY contracts/ contracts/
-COPY replays/ replays/
+COPY replays/mock.jsonl replays/mock.jsonl
 RUN python -m pip install --no-cache-dir --no-deps . && python -m pip check
 COPY --from=frontend-build /build/frontend/dist frontend/dist
 RUN useradd --create-home --uid 10001 whack && chown -R whack:whack /app

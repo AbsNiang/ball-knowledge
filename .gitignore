@@ -17,4 +17,5 @@ backend/data/raw/
 backend/data/processed/
 .codex/
 .claude/
-replays
+replays/*
+!replays/mock.jsonl

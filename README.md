@@ -35,8 +35,15 @@ docker build --target frontend-build -t whack:checks .
 docker run --rm -e WHACK_SMOKE_URL=http://host.docker.internal:8000 whack:checks npm run test:hosted
 ```
 
-The deployment branch is `deploy/railway-demo`; select it as the Railway service
-source branch. Changes can be reviewed and tested there before merging into `main`.
+The deployment branch is `deploy/railway-demo`. Changes can be reviewed and tested
+there before merging into `main`. If Railway's GitHub app has repository access,
+select that source branch. Otherwise upload the clean branch with the CLI:
+
+```powershell
+npx --yes @railway/cli up --project d5cd55e4-f2ed-47f5-88bd-5c686c909d21 --environment production --service whack --detach
+```
+
+The CLI respects `.gitignore`; keep the bundled `replays/mock.jsonl` exception.
 
 Deployment uses `LLM_MODE=fake`, `LANGSMITH_TRACING=false`, and `PORT=8000`.
 No Gemini key is needed. Sessions, evidence, and checkpoints are in memory and
