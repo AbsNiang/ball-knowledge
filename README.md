@@ -116,8 +116,10 @@ use `npm run dev` for the integrated local workflow. There is no coverage thresh
 environment variables take precedence. `LLM_MODE=fake` uses scripted decisions without
 network calls. `LLM_MODE=gemini` requires `GEMINI_API_KEY` and `GEMINI_MODEL` on the server.
 Keep API keys, local environments, dependencies, and generated data out of Git.
-See [plan.md](plan.md) for requirements, [TASKS.md](TASKS.md) for ownership, and
-[AGENTS.md](AGENTS.md) for contributor guidance. This is a research tool, not betting advice.
+See [plan.md](plan.md) for requirements, [TASKS.md](TASKS.md) for ownership,
+[HOSTING_PLAN.md](HOSTING_PLAN.md) for the proposed deployment architecture and launch
+checklist, and [AGENTS.md](AGENTS.md) for contributor guidance. This is a research tool,
+not betting advice.
 
 ## Research workspace MVP
 
