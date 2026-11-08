@@ -1,13 +1,15 @@
-"""Structured outputs for LLM decisions D1-D6 and the critic (plan.md §6.5, §8.2, §9.3).
+"""Structured outputs of the research loop's LLM roles, and the specs the researcher declares.
 
-Every decision carries a `rationale`. No schema has a verdict label: labels come from the gate.
-`HypothesisSpec` doubles as the tool input; it mirrors plan.md until Person A's tool contracts land.
+Roles: premise (D1), seeder, researcher (tool calls, see `toolkit.py`), judge, supervisor and
+aggregator. No schema has a verdict label: labels come from the gate. `HypothesisSpec` doubles as
+the tool input; it mirrors plan.md until Person A's tool contracts land.
 """
 
-from collections.abc import Sequence
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+MAX_SEEDS = 3
 
 FilterColumn = Literal[
     "season",
@@ -41,6 +43,8 @@ Control = Literal[
 ]
 Metric = Literal["ats_margin", "ats_cover", "margin", "win", "total_over", "roi"]
 PrimaryTest = Literal["compare_groups", "regress", "persistence", "market_test"]
+SeedKind = Literal["explanation", "confounder", "market"]
+Direction = Literal["a_gt_b", "a_lt_b", "two_sided"]
 
 
 class Filter(BaseModel):
@@ -61,7 +65,7 @@ class HypothesisSpec(BaseModel):
     metric: Metric
     group_a: SliceSpec
     group_b: SliceSpec | Literal["complement"] = "complement"
-    direction: Literal["a_gt_b", "a_lt_b", "two_sided"]
+    direction: Direction
     primary_test: PrimaryTest
     controls: list[Control] = Field(default_factory=list)
 
@@ -83,100 +87,109 @@ class ClaimDecision(BaseModel):
         return self
 
 
-class HypothesisSet(BaseModel):
-    """D2: 3-5 competing explanations, including one chance and at least one confounder."""
+# -- seeds -----------------------------------------------------------------------------------
+
+
+class SeedIdea(BaseModel):
+    id: str = Field(description="Short snake_case slug, unique within the run")
+    statement: str = Field(description="One specific, falsifiable explanation, in one sentence")
+    kind: SeedKind
+    rationale: str = Field(description="Why it could answer the question: sources and reasoning")
+    sources: list[str] = Field(
+        default_factory=list, description="URLs from `search.sources` that suggest this idea"
+    )
+    testable_with_data: bool = Field(
+        description="Whether the dataset's columns can express a statistical test of it"
+    )
+
+
+class SeedSet(BaseModel):
+    """Up to three competing ideas that would answer the user's question."""
 
     rationale: str
-    hypotheses: list[HypothesisSpec]
+    seeds: list[SeedIdea]
 
     @model_validator(mode="after")
-    def _competing(self) -> Self:
-        kinds = [h.kind for h in self.hypotheses]
-        if not 3 <= len(kinds) <= 5:
-            raise ValueError("propose 3-5 hypotheses")
-        if kinds.count("chance") != 1 or "confounder" not in kinds or "premise" in kinds:
-            raise ValueError("include exactly one chance and at least one confounder hypothesis")
+    def _size(self) -> Self:
+        if not 1 <= len(self.seeds) <= MAX_SEEDS:
+            raise ValueError(f"propose 1-{MAX_SEEDS} seeds")
         return self
 
 
-class HypothesisRevision(BaseModel):
-    """D2 after critique: one hypothesis revised (or justified point by point)."""
-
-    rationale: str
-    hypothesis: HypothesisSpec
+# -- tests the researcher declares -----------------------------------------------------------
 
 
-class PlanDecision(BaseModel):
-    """D3: the primary test for one hypothesis."""
-
-    rationale: str
-    tool: PrimaryTest
+class _TestFields(BaseModel):
+    statement: str = Field(description="What this test checks, in one sentence")
+    kind: SeedKind
+    metric: Metric
+    group_a: SliceSpec
+    group_b: SliceSpec | Literal["complement"] = "complement"
+    direction: Direction = Field(description="Declared before the test runs")
     controls: list[Control] = Field(default_factory=list)
 
 
-FollowUpAction = Literal["out_of_sample", "market_test", "placebo", "holdout_confirm", "conclude"]
+class ExploreSpec(_TestFields):
+    """An exploratory test. Its id is set by the system; its p-value enters the ledger."""
 
 
-class NextTest(BaseModel):
-    """D3b: after a result passes its gates, the next follow-up test, or `conclude`."""
+class DeclaredTest(_TestFields):
+    """The seed's primary test. Frozen once declared; it decides the seed's verdict."""
+
+    primary_test: PrimaryTest
+
+
+# -- judge, supervisor, aggregator -----------------------------------------------------------
+
+
+class JudgedClaim(BaseModel):
+    text: str
+    evidence: list[str] = Field(description="Node ids from `evidence` that back this claim")
+
+
+class Judgment(BaseModel):
+    """The judge's review of one research step and its running synthesis of the seed."""
+
+    step_review: Literal["sound", "concerns", "flawed"]
+    step_rationale: str = Field(
+        description="Construct validity, confounders, selection or look-ahead bias, overclaiming"
+    )
+    synthesis: str = Field(description="What all the evidence so far says, in 2-5 sentences")
+    stance: Literal["supported", "refuted", "mixed", "insufficient"]
+    confidence: Literal["low", "medium", "high"]
+    claims: list[JudgedClaim] = Field(default_factory=list)
+    self_check: str = Field(
+        description="Check your own synthesis: which evidence cuts against it, and did you claim "
+        "more than the gate results allow?"
+    )
+    open_questions: list[str] = Field(default_factory=list)
+    suggested_next: str | None = None
+
+
+class Supervision(BaseModel):
+    """The supervisor's call after each judged step on the active seed."""
 
     rationale: str
-    action: FollowUpAction
-    placebo_slice: SliceSpec | None = Field(
-        default=None, description="Required for placebo: a slice where the effect should be absent"
+    action: Literal["continue", "conclude"]
+    guidance: str | None = Field(
+        default=None, description="For continue: what the researcher should establish next"
     )
 
     @model_validator(mode="after")
-    def _placebo_needs_slice(self) -> Self:
-        if self.action == "placebo" and self.placebo_slice is None:
-            raise ValueError("a placebo needs placebo_slice")
+    def _guided(self) -> Self:
+        if self.action == "continue" and not (self.guidance or "").strip():
+            raise ValueError("continue needs guidance for the researcher")
         return self
 
 
-def next_test_schema(menu: Sequence[str]) -> type[NextTest]:
-    """`NextTest` narrowed to this call's menu, so a locked tool cannot even be chosen."""
-    return create_model("NextTest", __base__=NextTest, action=(Literal[tuple(menu)], ...))
-
-
-class Interpretation(BaseModel):
-    """D4: what the gated results do and do not show."""
-
-    rationale: str
+class SeedSummary(BaseModel):
+    seed_id: str
     summary: str
-    claims_made: list[str]
-    limitations: list[str]
-    cited_checks: list[str] = Field(description="Gate ids such as G2 that each claim rests on")
 
 
-class Narrative(BaseModel):
-    """D6: prose for a verdict whose label was already set by the gate."""
-
-    rationale: str
-    text: str
-
-
-class ReportDraft(BaseModel):
-    """D6: the answer to the user's question, written from the verdict table."""
+class Aggregate(BaseModel):
+    """The final answer: every seed's outcome, aggregated into an answer to the question."""
 
     rationale: str
     answer: str
-
-
-Mark = Literal["ok", "problem"]
-
-
-class CriticChecklist(BaseModel):
-    construct_validity: Mark = "ok"
-    missing_confounder: Mark = "ok"
-    selection_or_method_bias: Mark = "ok"
-    overclaim_given_gates: Mark = "ok"
-    testable_mechanism: Mark = "ok"
-
-
-class CriticReview(BaseModel):
-    verdict: Literal["approve", "concerns", "reject"]
-    checklist: CriticChecklist
-    severity: Literal["low", "medium", "high"]
-    evidence: list[str] = Field(description="Specific numbers or node ids the review relies on")
-    rationale: str
-    suggested_fix: str | None = None
+    seeds: list[SeedSummary] = Field(default_factory=list)

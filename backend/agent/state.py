@@ -1,6 +1,7 @@
-"""Router state: pointers, stages, gate outcomes and counters, plus the two things the
-specialists act on that the contract's `Node` has no field for: each track's current spec and
-each step's tool call. Everything else about a node lives in the event log (`EventLog.graph`).
+"""Run state: the premise, the seeds and their research steps, and the phase that runs next.
+
+Graph node details (titles, tool outputs, checks) live in the event log (`EventLog.graph`); this
+state holds pointers, frozen specs, gate outcomes and counters.
 """
 
 from typing import Any, Literal, TypedDict
@@ -8,34 +9,44 @@ from typing import Any, Literal, TypedDict
 Mode = Literal["live", "approval"]
 GateStatus = Literal["pass", "fail"]
 
-# A track's `stage` is the next thing to do for it.
-#   premise:    spec -> primary -> gated -> done
-#   hypothesis: spec -> plan -> primary -> choose -> (follow_up -> choose)* -> interpret
-#               -> verdict -> done
-# At `choose` the LLM picks the next follow-up test from the menu the gates have unlocked.
-Stage = Literal[
-    "spec", "plan", "primary", "gated", "choose", "follow_up", "interpret", "verdict", "done"
+# What the router dispatches next. Each phase is also the name of the LangGraph node that runs it.
+#   premise -> premise_test -> judge -> (premise again after a flawed review) -> seed
+#   -> per seed: research -> execute -> judge -> supervise -> (research ... | conclude)
+#   -> summarize
+Phase = Literal[
+    "premise",
+    "premise_test",
+    "seed",
+    "research",
+    "execute",
+    "judge",
+    "supervise",
+    "conclude",
+    "summarize",
+    "done",
 ]
-DECISION_STAGES = frozenset({"spec", "plan", "choose", "interpret", "verdict"})
-RESULT_STAGES = frozenset({"primary", "follow_up"})
-
-FOLLOW_UPS = ("out_of_sample", "market_test", "placebo", "holdout_confirm")
-LEDGER_TOOLS = frozenset({"compare_groups", "regress", "persistence", "market_test"})
-HOLDOUT_REQUIRES = ("G1", "G2", "G3", "G4", "G5", "G6")
-# A failed gate stops testing a hypothesis, except G6: failing the market check means "no
-# betting edge", not "not real", so it only locks the holdout.
-NON_STOPPING_GATES = frozenset({"G6"})
+# Where a research step's tool sits in the verdict: the confirmatory roles run the seed's frozen
+# primary test and decide its label; the rest only inform the judge.
+Role = Literal[
+    "declare", "primary", "replication", "market", "holdout", "explore", "search", "data"
+]
+CONFIRMATORY = ("primary", "replication", "market", "holdout")
 
 PREMISE = "premise"
-MAX_REVISIONS = 2  # plan.md [A10]
-REPORT_RESERVE = 2  # LLM calls kept back for the report (plan.md §8.5)
+MAX_STEPS_PER_SEED = 8
+MAX_PREMISE_REVISIONS = 1
+REPORT_RESERVE = 2  # LLM calls kept back for the final summary (plan.md §8.5)
+STEP_COST = 4  # worst-case LLM calls of one step: research, a search, the judge, the supervisor
 DEFAULT_BUDGET = {"max_llm_calls": 60, "max_tests": 40}
 
 INCONCLUSIVE = "Inconclusive"
+NOT_TESTED = "Inconclusive (not tested)"
 PREMISE_FALSE = "Premise false"
 UNTESTABLE = "Untestable"
 BUDGET_LABEL = "Inconclusive (budget)"
 REVIEW_LABEL = "Inconclusive (review)"
+STOPPING_GATES = ("G1", "G2", "G3", "G4", "G5")  # a failure here fixes the label for good
+HOLDOUT_REQUIRES = ("G1", "G2", "G3", "G4", "G5", "G6")
 
 
 class Budget(TypedDict):
@@ -46,30 +57,54 @@ class Budget(TypedDict):
 
 
 class Step(TypedDict):
-    """A node a track produced, in creation order. A revision truncates the list."""
+    """One research step: the researcher's call, what it produced, and the judge's review."""
 
-    node: str
-    stage: Stage  # the stage that produced it
-    tool: str | None  # results: the tool that ran; choices: the action chosen
-    gates: dict[str, GateStatus] | None  # results only: None until the gate lands
-    call: dict[str, Any] | None  # plans, choices and results: {"tool": ..., "args": ...}
+    plan: str  # test_plan node: the researcher's tool call
+    result: str | None  # test_result or source node
+    judgment: str | None  # judgment node
+    tool: str  # toolkit tool name
+    role: Role
+    args: dict[str, Any]  # the arguments the researcher gave
+    gates: dict[str, GateStatus] | None  # gate outcomes on the result, if it was gated
+    error: str | None  # why the step produced no evidence (tool error, human rejection)
 
 
-class Track(TypedDict):
-    """One line of inquiry: the premise, or one hypothesis."""
-
+class Seed(TypedDict):
     id: str
+    node: str  # hypothesis node
+    statement: str
     kind: str
-    stage: Stage
-    spec_node: str | None
-    spec: dict[str, Any] | None  # the claim or hypothesis spec in `spec_node`
+    rationale: str
+    testable_with_data: bool
+    sources: list[str]  # source nodes it was drawn from
+    status: Literal["queued", "active", "done", "pruned"]
+    primary: dict[str, Any] | None  # the frozen HypothesisSpec, once declared
+    primary_result: str | None  # test_result node of the primary test
+    primary_test_id: str | None
+    gates: dict[str, GateStatus]  # verdict gates, from confirmatory steps only
+    used: list[str]  # one-shot tools already run (declare and the confirmatory ones)
+    explored: int  # exploratory specs so far, for their ids
     steps: list[Step]
-    revisions: int
-    feedback: str | None  # critic or human objection the next attempt must answer
-    revising: str | None  # node the next attempt replaces (for the `revises` edge)
-    forced_label: str | None  # label set by rule outside compute_verdict
-    holdout_used: bool
+    judgment: dict[str, Any] | None  # the latest audited judgment
+    guidance: str | None  # the supervisor's guidance for the next step
+    feedback: str | None  # a tool error or human note the next step must answer
+    supervision: dict[str, Any] | None  # the supervisor's last decision and its LLM record
+    forced_label: str | None
     verdict: str | None
+    verdict_node: str | None
+
+
+class Premise(TypedDict):
+    node: str | None  # premise_check node
+    spec: dict[str, Any] | None
+    missing_data: list[str]
+    result: str | None  # test_result node
+    gates: dict[str, GateStatus] | None
+    judgment: str | None  # judgment node
+    revisions: int
+    feedback: str | None
+    revising: str | None  # node the next premise decision replaces
+    label: str | None  # set when the run ends at the premise
     verdict_node: str | None
 
 
@@ -78,33 +113,67 @@ class AgentState(TypedDict):
     question: str
     mode: Mode
     question_node: str | None
-    tracks: dict[str, Track]
-    order: list[str]  # hypothesis ids in test order, chance last
-    current: str | None
+    phase: Phase
+    premise: Premise
+    search_node: str | None
+    seeds: dict[str, Seed]
+    order: list[str]  # seed ids in research order
+    current: str | None  # the active seed
     outcome: str | None  # set when the run ends early: premise_false, untestable, ...
     budget: Budget
     exhausted: bool
-    awaiting_gate: list[str]
-    awaiting_critic: list[str]
-    waiting_on: list[str]
     approval: list[str]  # decisions queued for a human (approval mode)
     report: dict[str, Any] | None
     status: str
 
 
-def new_track(track_id: str, kind: str, stage: Stage) -> Track:
-    return Track(
-        id=track_id,
-        kind=kind,
-        stage=stage,
-        spec_node=None,
+def new_premise() -> Premise:
+    return Premise(
+        node=None,
         spec=None,
-        steps=[],
+        missing_data=[],
+        result=None,
+        gates=None,
+        judgment=None,
         revisions=0,
         feedback=None,
         revising=None,
+        label=None,
+        verdict_node=None,
+    )
+
+
+def new_seed(
+    seed_id: str,
+    node: str,
+    *,
+    statement: str,
+    kind: str,
+    rationale: str = "",
+    testable_with_data: bool = True,
+    sources: list[str] | None = None,
+) -> Seed:
+    return Seed(
+        id=seed_id,
+        node=node,
+        statement=statement,
+        kind=kind,
+        rationale=rationale,
+        testable_with_data=testable_with_data,
+        sources=list(sources or []),
+        status="queued",
+        primary=None,
+        primary_result=None,
+        primary_test_id=None,
+        gates={},
+        used=[],
+        explored=0,
+        steps=[],
+        judgment=None,
+        guidance=None,
+        feedback=None,
+        supervision=None,
         forced_label=None,
-        holdout_used=False,
         verdict=None,
         verdict_node=None,
     )
@@ -119,32 +188,26 @@ def initial_state(
         question=question,
         mode=mode,
         question_node=None,
-        tracks={PREMISE: new_track(PREMISE, "premise", "spec")},
+        phase="premise",
+        premise=new_premise(),
+        search_node=None,
+        seeds={},
         order=[],
         current=None,
         outcome=None,
         budget=Budget(**limits, llm_calls=0, tests=0),
         exhausted=False,
-        awaiting_gate=[],
-        awaiting_critic=[],
-        waiting_on=[],
         approval=[],
         report=None,
         status="running",
     )
 
 
-def result_steps(track: Track) -> list[Step]:
-    return [step for step in track["steps"] if step["stage"] in RESULT_STAGES]
+def stopping_failures(gates: dict[str, GateStatus]) -> list[str]:
+    """Failed gates that fix a seed's label, so no further test can change it. A gate that
+    errored (the pseudo-gate "error") fails closed the same way."""
+    return sorted(g for g in (*STOPPING_GATES, "error") if gates.get(g) == "fail")
 
 
-def track_gates(track: Track) -> dict[str, GateStatus]:
-    """Every gate outcome the track's live results have earned so far."""
-    gates: dict[str, GateStatus] = {}
-    for step in result_steps(track):
-        gates.update(step["gates"] or {})
-    return gates
-
-
-def latest(track: Track, stage: Stage) -> Step | None:
-    return next((step for step in reversed(track["steps"]) if step["stage"] == stage), None)
+def primary_held(gates: dict[str, GateStatus]) -> bool:
+    return all(gates.get(g) == "pass" for g in ("G1", "G2", "G3", "G4"))

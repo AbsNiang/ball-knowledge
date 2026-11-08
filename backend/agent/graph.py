@@ -1,10 +1,13 @@
-"""The orchestrator as a LangGraph stateful router.
+"""The research loop as a LangGraph stateful router.
 
-    START -> intake -> router <-> {premise, hypothesize, plan_test, execute_test, choose_test,
-                                   interpret, verdict, wait_checks, human_review}
-                       router  -> report -> END
+    START -> intake -> router <-> {premise, premise_test, seed, research, execute, judge,
+                                   supervise, conclude, human_review}
+                       router  -> summarize -> END
 
-`AgentRun` owns one run: its event log, background checks and checkpointed LangGraph thread.
+One run: the premise is checked first; a web search seeds up to three ideas; each seed is
+researched in turn (research -> execute -> judge -> supervise) until the supervisor concludes
+it; then every seed is aggregated into the answer. `AgentRun` owns one run: its event log and
+its checkpointed LangGraph thread.
 """
 
 import uuid
@@ -37,7 +40,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
     builder.add_node("router", router, destinations=ROUTES)
     for name, node in SPECIALISTS.items():
         builder.add_node(name, node)
-        builder.add_edge(name, END if name == "report" else "router")
+        builder.add_edge(name, END if name == "summarize" else "router")
     builder.add_edge(START, "intake")
     builder.add_edge("intake", "router")
     return builder.compile(checkpointer=checkpointer or InMemorySaver())
@@ -58,7 +61,7 @@ class AgentRun:
     ) -> None:
         self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
         self.log = EventLog(self.run_id)
-        self.context = AgentContext.create(llm=llm, tools=tools, gate=gate, log=self.log)
+        self.context = AgentContext(llm=llm, tools=tools, gate=gate, log=self.log)
         self.graph = build_graph(checkpointer)
         self.config = {
             "configurable": {"thread_id": self.run_id},
@@ -68,7 +71,7 @@ class AgentRun:
         self.pending_review: dict[str, Any] | None = None
 
     async def start(self) -> dict[str, Any] | None:
-        """Run until the report is written, or until a decision needs human review.
+        """Run until the answer is written, or until a decision needs human review.
 
         Standalone runs record `run_created` themselves; through the API, C's server does.
         """

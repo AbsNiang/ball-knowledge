@@ -11,7 +11,7 @@ class Contract(BaseModel):
 
 
 Mode = Literal["live", "approval"]
-Actor = Literal["orchestrator", "tool", "gate", "critic", "human", "system"]
+Actor = Literal["orchestrator", "tool", "gate", "critic", "judge", "human", "system"]
 RunStatus = Literal["queued", "running", "paused", "awaiting_approval", "completed", "failed", "cancelled"]
 
 
@@ -60,7 +60,7 @@ class ToolRecord(Contract):
 class CheckRecord(Contract):
     id: str
     node_id: str
-    checker: Literal["gate", "critic", "human"]
+    checker: Literal["gate", "critic", "judge", "human"]
     gate_id: Literal["G1", "G2", "G3", "G4", "G5", "G6", "G7"] | None = None
     status: Literal["pass", "flag", "fail"]
     severity: Literal["low", "medium", "high"]
@@ -87,6 +87,9 @@ class Node(Contract):
         "mechanism_prediction",
         "verdict",
         "human_note",
+        "source",
+        "judgment",
+        "report",
     ]
     version: int = Field(default=1, ge=1)
     created_at: datetime
