@@ -788,7 +788,7 @@ def _premise_verdict(rec: Recorder, state: AgentState, track: Premise) -> dict[s
 
 
 async def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """Aggregate every seed's outcome into the answer to the question."""
+    """Aggregate every seed's outcome into the answer to the question. Please make it human readable"""
     ctx, rec, graph = _deps(runtime)
     seeds, track = _final_g4(ctx, rec, state)
     if state["outcome"]:
