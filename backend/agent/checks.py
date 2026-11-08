@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from backend.agent import critic
-from backend.agent.ports import CheckResult, Gate, ToolResult
+from backend.agent.ports import CheckResult, Gate, ToolResult, from_gate
 from backend.agent.record import Recorder
 from backend.events.store import EventLog
 from backend.llm.gateway import LLMGateway
@@ -67,7 +67,7 @@ class CheckRunner:
 
     async def _run_gate(self, node_id: str, result: ToolResult, spec: Mapping[str, Any]) -> None:
         try:
-            results = self._gate.evaluate(node_id, result, spec)
+            results = [from_gate(c) for c in self._gate.evaluate(node_id, result, spec)]
         except Exception as exc:  # noqa: BLE001 - fail closed and keep the run alive
             results = [
                 CheckResult(
