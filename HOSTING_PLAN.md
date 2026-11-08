@@ -1,6 +1,32 @@
 # Whack hosting plan
 
-Status: proposed implementation plan. No infrastructure has been provisioned.
+Status: demo implemented and deployed on 8 November 2026. The architecture and
+remaining milestone 2 work below remain the implementation reference.
+
+## Deployment record
+
+- Live URL: https://whack-production.up.railway.app
+- Branch: `deploy/railway-demo`; deployed code commit: `27f18fa`.
+- Railway deployment: `c562faef-5853-4120-8ebd-5ee4ae6324e8`, status `SUCCESS`.
+- One replica, one Uvicorn worker, 1 GB memory limit, fake LLM mode, no Gemini key.
+- Uploaded through the authenticated Railway CLI. GitHub source attachment still
+  returns "User does not have access to the repo"; branch pushes do not autodeploy.
+- Validation: backend suite (300 passed, 8 skipped before the extra boundary test),
+  four production tests, Ruff, 11 frontend tests, frontend build, development
+  integration, local Docker smoke, and hosted Node 22 smoke passed. Hosted smoke
+  covered HTTPS/assets, WSS, controls, redirects, cursor reconnect, and fake reports.
+  Sixteen malformed/unknown HTTP cases plus WSS invalid cursors and replay passed.
+- Observed hosted memory: approximately 0.2 GB after smoke testing. Usage endpoint
+  still reported $0 immediately afterward; usage reporting may lag.
+- No upgrade or paid extras enabled. Railway rejected a $5 hard usage cap because
+  the minimum configurable hard cap is $10; no usage cap was added. Monitor trial
+  credit in Billing and stop the service when testing ends.
+- Sessions remain ephemeral; one non-replay run can be active globally. No browser
+  screenshot or manual UI review has been performed; the user will test the branch.
+- `railway.toml` worked for this release. The CLI warns that this config format is
+  supported until 1 December 2026; migrate to Railway's infrastructure-as-code
+  format before relying on later deployments.
+
 Prepared 8 November 2026 from the current checkout and the opening deployment
 analysis in [the referenced task](thread://01a1b7e4-fc62-7573-86ca-d07bf045fe3f).
 

@@ -4,6 +4,8 @@ NBA research assistant with deterministic statistical checks and an inspectable 
 
 ## Hosting
 
+Test deployment: https://whack-production.up.railway.app
+
 The Railway project is [whack](https://railway.com/project/d5cd55e4-f2ed-47f5-88bd-5c686c909d21).
 The production entrypoint serves React and `/api` HTTP/WebSockets on one origin.
 The Docker image pins Linux runtime dependencies in `requirements-runtime.txt`,
@@ -44,6 +46,9 @@ npx --yes @railway/cli up --project d5cd55e4-f2ed-47f5-88bd-5c686c909d21 --envir
 ```
 
 The CLI respects `.gitignore`; keep the bundled `replays/mock.jsonl` exception.
+The current deployment was uploaded from commit `27f18fa` on `deploy/railway-demo`.
+It uses CLI uploads because Railway's GitHub source connection still rejects this
+private repository. Pushing the branch does not automatically redeploy the service.
 
 Deployment uses `LLM_MODE=fake`, `LANGSMITH_TRACING=false`, and `PORT=8000`.
 No Gemini key is needed. Sessions, evidence, and checkpoints are in memory and
