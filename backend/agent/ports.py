@@ -7,13 +7,16 @@ It allows the pseudo-gate id "error", which fails closed.
 """
 
 from collections.abc import Mapping, Sequence
+from threading import RLock
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
 from backend.gate.gates import GateCheck
+from backend.tools.hashing import hash_args
 from backend.tools.registry import dispatch
 from backend.tools.schemas import ToolResult
+from backend.tools.state import ToolState, _active
 
 __all__ = [
     "CheckResult",
@@ -50,10 +53,29 @@ class Tools(Protocol):
 
 
 class RegistryTools:
-    """Person A's tool registry (mock tools until the real ones land) behind the `Tools` port."""
+    """Run-scoped statistical history and a shared agent/gate test budget."""
+
+    def __init__(self, max_tests: int = 12):
+        self.state = ToolState()
+        self.max_tests = min(max_tests, 12)
+        self.tests = 0
+        self._lock = RLock()
 
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
-        return dispatch(tool, args)
+        # Gate follow-up calls use this same instance and consume the same budget.
+        cost = 3 if tool == "holdout_confirm" else int(tool in {
+            "compare_groups", "regress", "persistence", "market_test",
+            "out_of_sample", "placebo",
+        })
+        with self._lock:
+            if self.tests + cost > self.max_tests:
+                return ToolResult(tool=tool, args=args, status="error", reason="test_budget_exhausted", args_hash=hash_args(args))
+            self.tests += cost
+            token = _active.set(self.state)
+            try:
+                return dispatch(tool, args)
+            finally:
+                _active.reset(token)
 
 
 class Gate(Protocol):

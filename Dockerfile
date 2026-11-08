@@ -7,7 +7,7 @@ COPY contracts/ /build/contracts/
 RUN npm run build
 
 FROM python:3.12.9-slim@sha256:48a11b7ba705fd53bf15248d1f94d36c39549903c5d59edcfa2f3f84126e7b44 AS runtime
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 LLM_MODE=fake LANGSMITH_TRACING=false
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 LLM_MODE=gemini WHACK_AGENT_TOOLS=registry WHACK_TOOLS=real LANGSMITH_TRACING=false
 WORKDIR /app
 COPY requirements-runtime.txt ./
 RUN python -m pip install --no-cache-dir -r requirements-runtime.txt

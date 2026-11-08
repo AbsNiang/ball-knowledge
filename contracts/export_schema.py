@@ -11,12 +11,14 @@ from contracts.api import (
     ReplayRequest,
     Report,
     RunAccepted,
+    RuntimeInfo,
 )
 from contracts.events import Event
 from contracts.models import Contract
 
 
 class Contracts(Contract):
+    runtime: RuntimeInfo
     event: Event
     create_run: CreateRun
     run_accepted: RunAccepted

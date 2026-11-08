@@ -56,7 +56,8 @@ from backend.agent.toolkit import (
 )
 from backend.events.projection import ResearchGraph
 from backend.gate.config import SEED as TOOL_SEED
-from backend.llm.gateway import NoToolCall, SearchResult, ToolCall
+from backend.llm.gateway import BudgetExceeded, NoToolCall, SearchResult, ToolCall
+from backend.llm.redaction import safe_error
 from backend.tools.hashing import hash_args
 from contracts.api import Approve, OptionalNote, Reject, RequiredNote
 from contracts.models import LLMRecord, ToolRecord
@@ -168,7 +169,7 @@ async def _gate(
                 checker="gate",
                 gate_id="error",
                 status="fail",
-                rationale=f"Gate error: {exc!r}",
+                rationale=f"Gate error: {safe_error(exc)}",
             )
         ]
     for check in results:
@@ -249,7 +250,7 @@ async def _search(
         found = await ctx.llm.search(query, system=PROMPTS["search"], meta=_meta(state, "search"))
         error = None
     except Exception as exc:  # noqa: BLE001 - the network is not allowed to end the run
-        found, error = SearchResult(query=query, summary=""), repr(exc)
+        found, error = SearchResult(query=query, summary=""), safe_error(exc)
     elapsed = (time.perf_counter() - started) * 1000
     return found, _source_node(ctx, rec, found, parents, elapsed, error), error
 
@@ -833,19 +834,30 @@ async def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
             seeds[s]["statement"] for s in state["order"] if seeds[s]["status"] == "pruned"
         ],
     }
-    out: Aggregate = await _decide(ctx, state, "summarize", Aggregate, context)
+    try:
+        out: Aggregate = await _decide(ctx, state, "summarize", Aggregate, context)
+        summary_record = _llm(ctx, "summarize", context, out)
+    except BudgetExceeded as exc:
+        rec.error("budget_exhausted", safe_error(exc))
+        out = Aggregate(
+            rationale="Execution budget exhausted; report assembled from recorded gate verdicts.",
+            answer="Research stopped at the server execution limit. The recorded verdicts below are the available evidence; no further model summary was generated.",
+        )
+        summary_record = None
     summaries = {s.seed_id: s.summary for s in out.seeds}
     for row in rows:
         row["summary"] = summaries.get(row["track"], "")
     answer = out.answer
+    if summary_record is not None:
+        summary_record.rationale = _render_report(answer, rows)
     node = rec.node(
         "report",
         f"Answer: {state['question']}",
         parents=[row["verdict_node"] for row in rows] or [state["question_node"]],
         done=True,
-        llm=_llm(ctx, "summarize", context, out, rationale=_render_report(answer, rows)),
+        llm=summary_record,
     )
-    budget = {**state["budget"], "llm_calls": ctx.llm.calls}
+    budget = {**state["budget"], "llm_calls": ctx.llm.calls, "tests": max(state["budget"]["tests"], getattr(ctx.tools, "tests", 0))}
     report = {
         "question": state["question"],
         "outcome": state["outcome"],

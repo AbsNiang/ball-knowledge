@@ -20,12 +20,20 @@ import time
 from collections import deque
 from collections.abc import Sequence
 from typing import Any, TypeVar
+from weakref import WeakKeyDictionary
 
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel
 
-from backend.llm.gateway import NoToolCall, SearchHit, SearchResult, ToolCall, ToolSpec
+from backend.llm.gateway import (
+    BudgetExceeded,
+    NoToolCall,
+    SearchHit,
+    SearchResult,
+    ToolCall,
+    ToolSpec,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -42,6 +50,8 @@ class RateLimiter:
     """At most `rpm` requests in any 60-second window, shared by concurrent callers."""
 
     def __init__(self, rpm: int, window: float = 60.0) -> None:
+        if rpm < 1:
+            raise ValueError("GEMINI_RPM must be positive")
         self.rpm = rpm
         self.window = window
         self._sent: deque[float] = deque()
@@ -73,14 +83,32 @@ def _prompt(decision: str, context: dict[str, Any]) -> str:
     return f"Decision: {decision}\nContext (JSON):\n{json.dumps(context, default=str)}"
 
 
+_limiters = WeakKeyDictionary()
+
+
+def shared_limiter(rpm: int) -> RateLimiter:
+    per_loop = _limiters.setdefault(asyncio.get_running_loop(), {})
+    return per_loop.setdefault(rpm, RateLimiter(rpm))
+
+
 class GeminiGateway:
     def __init__(
         self, *, api_key: str, model_id: str, rpm: int = DEFAULT_RPM, client: Any = None
     ) -> None:
         self.model_id = model_id
         self.calls = 0
-        self._client = client or genai.Client(api_key=api_key)
-        self._limiter = RateLimiter(rpm)
+        self._client = client or genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1)
+            ),
+        )
+        if rpm < 1:
+            raise ValueError("GEMINI_RPM must be positive")
+        self.rpm = rpm
+        self.attempts = 0
+        self.max_calls = 60
+        self.max_attempts = 120
 
     @classmethod
     def from_env(cls) -> "GeminiGateway":
@@ -92,17 +120,24 @@ class GeminiGateway:
         return cls(api_key=api_key, model_id=model_id, rpm=rpm)
 
     async def _generate(self, contents: str, config: types.GenerateContentConfig) -> Any:
+        if self.calls >= min(self.max_calls, 60):
+            raise BudgetExceeded("Logical model call budget exhausted")
         self.calls += 1
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            await self._limiter.acquire()
+            if self.attempts >= min(self.max_attempts, 120):
+                raise BudgetExceeded("Outbound attempt budget exhausted")
+            self.attempts += 1
+            await shared_limiter(self.rpm).acquire()
             try:
                 return await self._client.aio.models.generate_content(
                     model=self.model_id, contents=contents, config=config
                 )
             except errors.APIError as exc:
                 if exc.code not in RETRYABLE or attempt == MAX_ATTEMPTS:
-                    raise
+                    raise RuntimeError(f"Gemini request failed (HTTP {exc.code})") from None
                 await asyncio.sleep(5 * 2 ** (attempt - 1))
+            except Exception as exc:  # noqa: BLE001 - hide transport credentials
+                raise RuntimeError(f"Gemini transport failed ({type(exc).__name__})") from None
         raise AssertionError("unreachable")
 
     async def structured(
@@ -154,7 +189,7 @@ class GeminiGateway:
         response = await self._generate(_prompt(decision, context), config)
         calls = response.function_calls or []
         if not calls:
-            raise NoToolCall(f"no function call in the reply: {(response.text or '')[:200]!r}")
+            raise NoToolCall("Gemini returned no function call")
         args = dict(calls[0].args or {})
         reason = str(args.pop("reason", ""))
         return ToolCall(tool=calls[0].name or "", args=args, reason=reason)

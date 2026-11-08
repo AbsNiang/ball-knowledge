@@ -41,7 +41,7 @@ async function stop(child){
 test('Vite proxies HTTP, live agent events, controls, reconnects and backend restarts', {timeout:120000}, async t=>{
   const apiPort=await freePort(), uiPort=await freePort();
   const python=process.env.WHACK_TEST_PYTHON || `${root}/.venv/${process.platform==='win32'?'Scripts/python.exe':'bin/python'}`;
-  const startApi=()=>launch(python,['-m','uvicorn','backend.api.main:app','--port',String(apiPort)],root,{LLM_MODE:'fake',LANGSMITH_TRACING:'false'});
+  const startApi=()=>launch(python,['-m','uvicorn','backend.tests.fake_server:app','--port',String(apiPort)],root,{LLM_MODE:'fake',LANGSMITH_TRACING:'false'});
   let api=startApi();
   const vite=launch(process.execPath,[`${frontend}/node_modules/vite/bin/vite.js`,'--host','127.0.0.1','--port',String(uiPort)],frontend,{WHACK_API_TARGET:`http://127.0.0.1:${apiPort}`});
   const streams=[];

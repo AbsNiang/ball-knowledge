@@ -3,6 +3,8 @@
 These skip until `python -m backend.data.build` has run on real downloads.
 """
 
+import json
+
 import pandas as pd
 import pytest
 
@@ -14,14 +16,21 @@ needs_real_data = pytest.mark.skipif(
     not (PROCESSED_DIR / GAMES_FILE).exists(), reason="dataset not built yet"
 )
 
-# Fill with five games checked by hand against a box score and the archive, as
-# (game_id, team, ats_margin, ats_cover). The test stays skipped until there are five.
-HAND_CHECKED_GAMES: list[tuple[str, str, float, int | None]] = []
+# Five public games checked independently; see the linked validation notes.
+HAND_CHECKED_GAMES: list[tuple[str, str, float, int | None]] = [
+    ("0041500401", "GSW", 9.0, 1),  # 104-89, GS -6
+    ("0041500402", "GSW", 27.0, 1),  # 110-77, GS -6
+    ("0041500404", "CLE", -13.5, 0),  # 97-108, CLE -2.5
+    ("0041500406", "CLE", 12.0, 1),  # 115-101, CLE -2
+    ("0041500407", "GSW", -8.5, 0),  # 89-93, archive GS -4.5
+]
+# Independent scores/lines and the Game 7 line movement are documented in
+# docs/live-research-validation.md. The archive is the authoritative line per game.
 
 
 @needs_real_data
 def test_join_rate_meets_the_threshold_in_every_season():
-    rates = pd.read_csv(PROCESSED_DIR / "reports" / "join_rate_by_season.csv")
+    rates = pd.DataFrame(json.loads((PROCESSED_DIR / "manifest.json").read_text())["join_rates"])
     assert (rates["join_rate"] >= MIN_JOIN_RATE).all(), rates
 
 

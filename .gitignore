@@ -13,9 +13,19 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
-# backend/data/raw/
-# backend/data/processed/
+backend/data/raw/
+backend/data/processed/*
+!backend/data/processed/games.parquet
+!backend/data/processed/team_games.parquet
+!backend/data/processed/manifest.json
+!backend/data/processed/sealed/
+backend/data/processed/sealed/*
+!backend/data/processed/sealed/games.parquet
+!backend/data/processed/sealed/team_games.parquet
 .codex/
 .claude/
 replays/*
 !replays/mock.jsonl
+
+.vite/
+.vite-diagnosis/

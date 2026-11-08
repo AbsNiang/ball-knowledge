@@ -13,6 +13,18 @@ class CreateRun(Contract):
     budget: Budget = Field(default_factory=Budget)
 
 
+class RuntimeInfo(Contract):
+    ready: bool
+    execution_mode: Literal["gemini_real", "unavailable"]
+    model_id: str | None = None
+    dataset_version: str | None = None
+    historical_coverage: str = "2007–08 through 2021–22 (2021–22 sealed holdout). Web research does not extend statistical coverage."
+    unavailable_reason: str | None = None
+    max_llm_calls: int = 60
+    max_tests: int = 12
+    max_outbound_attempts: int = 120
+
+
 class RunAccepted(Contract):
     run_id: str
 

@@ -44,6 +44,10 @@ class SearchResult(BaseModel):
     search_queries: list[str] = Field(default_factory=list)
 
 
+class BudgetExceeded(RuntimeError):
+    """The server's hard per-run execution limit was reached."""
+
+
 class NoToolCall(ValueError):
     """The model answered without calling one of the offered tools."""
 

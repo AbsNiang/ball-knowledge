@@ -239,3 +239,30 @@ WebSocket client is enabled for this test; no browser or external API key is nee
 The frontend uses React, Tailwind CSS, React Flow, Dagre, react-markdown with GFM,
 and Recharts. Node selection opens the inspector; its Evidence tab accepts chart data
 from `node.tool.output.charts` and always exposes the original tool JSON.
+
+
+## Live research runtime
+
+Normal submissions use Gemini and the real statistical registry. Copy `.env.example` to
+`.env` for the CLI; for the API set service environment variables (the API does not load a
+developer .env). Configure GEMINI_API_KEY, GEMINI_MODEL and a positive GEMINI_RPM, plus
+LLM_MODE=gemini, WHACK_AGENT_TOOLS=registry and WHACK_TOOLS=real. Missing credentials,
+invalid modes or invalid packaged data produce a safe error; there is no mock fallback.
+The UI defaults to real research; Scripted demo explicitly uses synthetic evidence.
+
+GET /api/runtime reports readiness, model, dataset version, coverage and server limits.
+Each run is capped at 60 logical model calls, 12 statistical computations (including gate
+follow-ups and up to three computations per holdout), and 120 outbound attempts. Smaller
+browser budgets are honored; larger budgets are clamped. Calls share the process rate limiter.
+Statistical data ends in 2021–22, with that season sealed; web research does not extend it.
+
+The four processed Parquet files and manifest ship in Docker. Raw downloads and diagnostic
+reports are excluded. To rebuild locally: `python -m backend.data.fetch` then
+`python -m backend.data.build`; the build regenerates the manifest, which must be reviewed before deployment.
+Existing tests: `python -m pytest -q`; lint: `python -m ruff check backend contracts`.
+Frontend: `cd frontend`, `npm ci`, `npm test`, `npm run build`.
+Contracts: from the root `python -m contracts.export_schema`, then from frontend
+`npm run contracts`. Development: `python -m uvicorn backend.api.main:app --reload`
+and `npm run dev` in frontend. Production: `docker build -t whack-live .` then
+`docker run --env-file .env -p 8000:8000 whack-live`.
+See [validation and rollback](docs/live-research-validation.md).

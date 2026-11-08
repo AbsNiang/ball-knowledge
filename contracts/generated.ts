@@ -5,6 +5,15 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+export type Ready = boolean;
+export type ExecutionMode = "gemini_real" | "unavailable";
+export type ModelId = string | null;
+export type DatasetVersion = string | null;
+export type HistoricalCoverage = string;
+export type UnavailableReason = string | null;
+export type MaxLlmCalls = number;
+export type MaxTests = number;
+export type MaxOutboundAttempts = number;
 export type Seq = number;
 export type RunId = string;
 export type Ts = string;
@@ -39,8 +48,8 @@ export type Payload =
 export type Type1 = "run_created";
 export type Question = string;
 export type Mode = "live" | "approval";
-export type MaxLlmCalls = number;
-export type MaxTests = number;
+export type MaxLlmCalls1 = number;
+export type MaxTests1 = number;
 export type MaxDepth = number;
 export type Type2 = "run_status";
 export type Status = "queued" | "running" | "paused" | "awaiting_approval" | "completed" | "failed" | "cancelled";
@@ -66,7 +75,7 @@ export type Lifecycle = "proposed" | "running" | "checking" | "complete";
 export type CheckOutcome = "pending" | "passed" | "flagged" | "failed";
 export type Flags = ("tainted" | "pruned" | "awaiting_approval" | "overridden" | "stale")[];
 export type Title = string;
-export type ModelId = string;
+export type ModelId1 = string;
 export type Prompt = string;
 export type RawResponse = string;
 export type Rationale = string;
@@ -174,6 +183,7 @@ export type Code1 = string;
 export type Message1 = string;
 
 export interface Contracts {
+  runtime: RuntimeInfo;
   event: Event;
   create_run: CreateRun;
   run_accepted: RunAccepted;
@@ -182,6 +192,17 @@ export interface Contracts {
   replay: ReplayRequest;
   report: Report;
   error: ErrorResponse;
+}
+export interface RuntimeInfo {
+  ready: Ready;
+  execution_mode: ExecutionMode;
+  model_id?: ModelId;
+  dataset_version?: DatasetVersion;
+  historical_coverage?: HistoricalCoverage;
+  unavailable_reason?: UnavailableReason;
+  max_llm_calls?: MaxLlmCalls;
+  max_tests?: MaxTests;
+  max_outbound_attempts?: MaxOutboundAttempts;
 }
 export interface Event {
   seq: Seq;
@@ -199,8 +220,8 @@ export interface RunCreated {
   budget: Budget;
 }
 export interface Budget {
-  max_llm_calls?: MaxLlmCalls;
-  max_tests?: MaxTests;
+  max_llm_calls?: MaxLlmCalls1;
+  max_tests?: MaxTests1;
   max_depth?: MaxDepth;
 }
 export interface StatusChanged {
@@ -228,7 +249,7 @@ export interface Node {
   verdict?: Verdict | null;
 }
 export interface LLMRecord {
-  model_id: ModelId;
+  model_id: ModelId1;
   prompt: Prompt;
   raw_response: RawResponse;
   parsed_output: ParsedOutput;

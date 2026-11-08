@@ -112,7 +112,7 @@ async def router(state: AgentState, runtime: Runtime[AgentContext]) -> Command:
             if message["mode"] != mode:
                 mode = message["mode"]
                 rec.mode(mode)
-    budget = Budget(**{**state["budget"], "llm_calls": ctx.llm.calls})
+    budget = Budget(**{**state["budget"], "llm_calls": ctx.llm.calls, "tests": max(state["budget"]["tests"], getattr(ctx.tools, "tests", 0))})
     update: dict[str, Any] = {"mode": mode, "budget": budget}
     if mode == "live" and state["approval"]:
         update["approval"] = []

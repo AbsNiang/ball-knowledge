@@ -44,6 +44,8 @@ def active_backend() -> Literal["real", "mock"]:
     choice = os.environ.get("WHACK_TOOLS", "auto").strip().lower()
     if choice in ("real", "mock"):
         return choice
+    if choice != "auto":
+        raise ValueError("WHACK_TOOLS must be real, mock or auto")
     return "real" if data.is_built() else "mock"
 
 

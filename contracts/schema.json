@@ -57,7 +57,7 @@
           "type": "integer"
         },
         "max_tests": {
-          "default": 40,
+          "default": 12,
           "minimum": 1,
           "title": "Max Tests",
           "type": "integer"
@@ -1274,6 +1274,85 @@
       "title": "RunCreated",
       "type": "object"
     },
+    "RuntimeInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "execution_mode": {
+          "enum": [
+            "gemini_real",
+            "unavailable"
+          ],
+          "title": "Execution Mode",
+          "type": "string"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "dataset_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset Version"
+        },
+        "historical_coverage": {
+          "default": "2007\u201308 through 2021\u201322 (2021\u201322 sealed holdout). Web research does not extend statistical coverage.",
+          "title": "Historical Coverage",
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        },
+        "max_llm_calls": {
+          "default": 60,
+          "title": "Max Llm Calls",
+          "type": "integer"
+        },
+        "max_tests": {
+          "default": 12,
+          "title": "Max Tests",
+          "type": "integer"
+        },
+        "max_outbound_attempts": {
+          "default": 120,
+          "title": "Max Outbound Attempts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ready",
+        "execution_mode"
+      ],
+      "title": "RuntimeInfo",
+      "type": "object"
+    },
     "SetMode": {
       "additionalProperties": false,
       "properties": {
@@ -1444,6 +1523,9 @@
   },
   "additionalProperties": false,
   "properties": {
+    "runtime": {
+      "$ref": "#/$defs/RuntimeInfo"
+    },
     "event": {
       "$ref": "#/$defs/Event"
     },
@@ -1517,6 +1599,7 @@
     }
   },
   "required": [
+    "runtime",
     "event",
     "create_run",
     "run_accepted",

@@ -5,7 +5,6 @@ import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from contracts.api import CreateRun, Intervention, Report, ReportRow
@@ -31,47 +30,29 @@ class Session:
 
 
 def configured_run(run_id: str, request: CreateRun):
-    """The CLI's defaults (fake LLM, synthetic stub tools, the real gate), configurable by env:
-    `LLM_MODE` (fake | gemini) and `WHACK_AGENT_TOOLS` (stub | registry). `registry` runs
-    Person A's tools: the real ones when the dataset is built, mock ones otherwise."""
-    try:
-        from dotenv import load_dotenv
+    """Normal research always uses Gemini and isolated, real statistical tools."""
+    from backend.agent.graph import AgentRun
+    from backend.agent.ports import RegistryTools
+    from backend.api.runtime import runtime_info
+    from backend.gate.gates import StatsGate
+    from backend.llm.gemini import GeminiGateway
 
-        from backend.agent.graph import AgentRun
-        from backend.agent.ports import RegistryTools
-        from backend.agent.stubs import StubTools, b2b_script
-        from backend.gate.gates import StatsGate
-        from backend.llm.fake import FakeLLM
-
-        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
-        mode = os.environ.get("LLM_MODE", "fake")
-        if mode == "gemini":
-            from backend.llm.gemini import GeminiGateway
-
-            llm = GeminiGateway.from_env()
-        elif mode == "fake":
-            llm = FakeLLM(b2b_script)
-        else:
-            raise RuntimeError("LLM_MODE must be fake or gemini.")
-        choice = os.environ.get("WHACK_AGENT_TOOLS", "stub").strip().lower()
-        if choice not in ("stub", "registry"):
-            raise RuntimeError("WHACK_AGENT_TOOLS must be stub or registry.")
-        tools = StubTools() if choice == "stub" else RegistryTools()
-        return AgentRun(
-            request.question,
-            run_id=run_id,
-            mode=request.mode,
-            budget=request.budget.model_dump(include={"max_llm_calls", "max_tests"}),
-            llm=llm,
-            tools=tools,
-            gate=StatsGate(tools.run),
-        )
-    except ImportError as exc:
-        raise AgentUnavailableError(
-            'Install the backend dependencies with python -m pip install -e ".[dev]".'
-        ) from exc
-    except (RuntimeError, ValueError) as exc:
-        raise AgentUnavailableError(str(exc)) from exc
+    info = runtime_info()
+    if not info.ready:
+        raise AgentUnavailableError(info.unavailable_reason)
+    # Explicit real selection also closes the registry's standalone auto path.
+    os.environ["WHACK_TOOLS"] = "real"
+    limits = {
+        "max_llm_calls": min(request.budget.max_llm_calls, 60),
+        "max_tests": min(request.budget.max_tests, 12),
+    }
+    tools = RegistryTools(max_tests=limits["max_tests"])
+    llm = GeminiGateway.from_env()
+    llm.max_calls = limits["max_llm_calls"]
+    return AgentRun(
+        request.question, run_id=run_id, mode=request.mode, budget=limits,
+        llm=llm, tools=tools, gate=StatsGate(tools.run),
+    )
 
 
 class AgentService:
@@ -80,6 +61,8 @@ class AgentService:
         self.sessions: dict[str, Session] = {}
 
     async def start(self, run_id: str, request: CreateRun, events: EventSink) -> None:
+        if run_id in self.sessions:
+            raise ValueError("Run identifier already exists")
         run = self.factory(run_id, request)
         queue: asyncio.Queue[Event] = asyncio.Queue()
 

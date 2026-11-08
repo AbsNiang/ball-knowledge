@@ -9,7 +9,7 @@ _BASE = (
 )
 
 DATASET = {
-    "grain": "team_games: two rows per game, one from each team's perspective, 2007-08 onward",
+    "grain": "team_games: two rows per game, one from each team's perspective, 2007-08 through 2021-22 only; current web search does not extend this coverage",
     "metrics": {
         "ats_margin": "margin + spread: performance against the closing line (points)",
         "ats_cover": "1 if the team covered the spread, 0 if not, pushes dropped",

@@ -17,7 +17,7 @@ RunStatus = Literal["queued", "running", "paused", "awaiting_approval", "complet
 
 class Budget(Contract):
     max_llm_calls: int = Field(default=60, ge=1)
-    max_tests: int = Field(default=40, ge=1)
+    max_tests: int = Field(default=12, ge=1)
     max_depth: int = Field(default=8, ge=1)
 
 

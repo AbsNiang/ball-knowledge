@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildSync } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 
-const target=process.env.WHACK_SMOKE_URL;
+const target=process.env.WHACK_FAKE_SMOKE_URL;
 const entry=fileURLToPath(new URL('../src/stream.ts',import.meta.url));
 const {outputFiles}=buildSync({entryPoints:[entry],bundle:true,write:false,format:'esm'});
 const {RunStream}=await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);

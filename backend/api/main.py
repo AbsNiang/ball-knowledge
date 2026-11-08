@@ -14,6 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from backend.api.agent import AgentService, AgentUnavailableError
 from backend.api.demo import DemoAgent
+from backend.api.runtime import runtime_info
 from backend.events.memory import MemoryEventLog, RunEventSink
 from contracts.api import (
     CreateRun,
@@ -23,6 +24,7 @@ from contracts.api import (
     ReplayRequest,
     Report,
     RunAccepted,
+    RuntimeInfo,
 )
 from contracts.events import Event, InterventionRecorded, RunCreated, StatusChanged
 from contracts.models import Node
@@ -102,6 +104,10 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
             if not statuses or statuses[-1] in ("queued", "running", "awaiting_approval"):
                 fail(409, "run_active", "Pause the active session first.")
 
+    @app.get("/runtime", response_model=RuntimeInfo)
+    def runtime():
+        return runtime_info()
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -116,6 +122,10 @@ def create_app(agent: AgentPort | None = None) -> FastAPI:
             return await start_live(request)
 
     async def start_live(request: CreateRun):
+        request = request.model_copy(update={"budget": request.budget.model_copy(update={
+            "max_llm_calls": min(request.budget.max_llm_calls, 60),
+            "max_tests": min(request.budget.max_tests, 12),
+        })})
         runtime = require_agent()
         require_idle()
         run_id = str(uuid4())

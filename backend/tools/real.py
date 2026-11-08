@@ -11,8 +11,8 @@ Statistics (section 7.3):
 - CI: 5,000 bootstrap resamples of whole games within seasons, percentile method.
 - MDE: (z 0.975 + z 0.80) times the bootstrap standard error.
 
-State kept across calls (prior tests, hypotheses, holdout use) is per process for now, until
-the run-context contract item is settled. `reset_state` clears it.
+Prior tests, registered hypotheses and holdout use belong to the RegistryTools run context.
+Standalone dispatch retains its own context for the CLI and tool tests.
 """
 
 import itertools
@@ -43,6 +43,7 @@ from backend.tools.schemas import (
     ToolResult,
 )
 from backend.tools.slices import SliceError, complement, metric_values, select
+from backend.tools.state import current
 
 _BINARY_METRICS = {"ats_cover", "win", "total_over"}
 _SPREAD_CONTROLLED_METRICS = {"ats_margin", "ats_cover", "win", "roi"}
@@ -66,16 +67,11 @@ _COLUMN_TYPES = {
     "games_into_season": "int",
 }
 
-_tests: dict[str, dict] = {}  # test_id -> {"tool", "args", "effect"}
-_hypotheses: dict[str, HypothesisSpec] = {}
-_holdout_used: set[str] = set()
-
-
 def reset_state() -> None:
-    """Forget prior tests, hypotheses and holdout use."""
-    _tests.clear()
-    _hypotheses.clear()
-    _holdout_used.clear()
+    """Forget history in the current execution context."""
+    current().tests.clear()
+    current().hypotheses.clear()
+    current().holdout_used.clear()
 
 
 class ToolFailure(Exception):
@@ -376,12 +372,12 @@ def _with_split(spec: SliceSpec, split: str) -> SliceSpec:
 
 
 def _remember(test_id: str, tool: str, args, effect: float | None) -> None:
-    _tests[test_id] = {"tool": tool, "args": args, "effect": effect}
+    current().tests[test_id] = {"tool": tool, "args": args, "effect": effect}
 
 
 def latest_primary_effect(hypothesis_id: str, tool: str) -> float | None:
     """The explore-split effect of a hypothesis's primary test, if it was run."""
-    for record in reversed(list(_tests.values())):
+    for record in reversed(list(current().tests.values())):
         spec = getattr(record["args"], "spec", None)
         if record["tool"] == tool and spec is not None and spec.id == hypothesis_id:
             return record["effect"]
@@ -456,13 +452,16 @@ def add_feature(args: AddFeatureArgs, raw: dict) -> ToolResult:
 
 
 def _group_test(tool: str, args, raw: dict, run) -> ToolResult:
+    existing = current().hypotheses.get(args.spec.id)
+    if existing is not None and tool == existing.primary_test and existing != args.spec:
+        raise ToolFailure("hypothesis_already_registered")
     args_hash = hash_args(raw)
     out = run(data.public_frame(), args.spec, rng_for(args_hash))
     _remember(args_hash, tool, args, out["effect"])
     # The spec holdout_confirm will run is the one used by the hypothesis's own primary test, so
     # a secondary test under the same id can't replace it. Any spec registers if none has yet.
-    if tool == args.spec.primary_test or args.spec.id not in _hypotheses:
-        _hypotheses[args.spec.id] = args.spec
+    if args.spec.id not in current().hypotheses:
+        current().hypotheses[args.spec.id] = args.spec
     out["extra"] |= {"test_id": args_hash, "spec_hash": hash_args({"tool": tool, "args": raw})}
     return result(tool, raw, raw, **out)
 
@@ -543,7 +542,7 @@ def _rerun(prior: dict, rng, *, split: str | None = None, group_a: SliceSpec | N
 
 @guarded("out_of_sample")
 def out_of_sample(args: OutOfSampleArgs, raw: dict) -> ToolResult:
-    prior = _tests.get(args.test_id)
+    prior = current().tests.get(args.test_id)
     if prior is None:
         raise ToolFailure("unknown_test_id")
     out = _rerun(prior, rng_for(hash_args(raw)), split="validate")
@@ -560,7 +559,7 @@ def out_of_sample(args: OutOfSampleArgs, raw: dict) -> ToolResult:
 
 @guarded("placebo")
 def placebo(args: PlaceboArgs, raw: dict) -> ToolResult:
-    prior = _tests.get(args.test_id)
+    prior = current().tests.get(args.test_id)
     if prior is None:
         raise ToolFailure("unknown_test_id")
     out = _rerun(prior, rng_for(hash_args(raw)), group_a=args.placebo_slice)

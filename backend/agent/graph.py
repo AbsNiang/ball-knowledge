@@ -27,6 +27,7 @@ from backend.agent.specialists import SPECIALISTS, intake
 from backend.agent.state import AgentState, Mode, initial_state
 from backend.events.store import EventLog
 from backend.llm.gateway import LLMGateway
+from backend.llm.redaction import safe_error
 from contracts.events import RunCreated
 from contracts.models import Budget
 
@@ -101,7 +102,7 @@ class AgentRun:
             out = await self.graph.ainvoke(payload, self.config, context=self.context)
         except Exception as exc:
             rec = Recorder(self.log)
-            rec.error("agent_error", repr(exc))
+            rec.error("agent_error", safe_error(exc))
             rec.status("failed")
             raise
         interrupts = out.get("__interrupt__") or []

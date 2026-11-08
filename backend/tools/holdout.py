@@ -9,6 +9,7 @@ from backend.data.store import read_sealed_holdout
 from backend.tools import data, real
 from backend.tools.hashing import hash_args
 from backend.tools.schemas import HoldoutConfirmArgs, ToolResult
+from backend.tools.state import current
 
 _SUPPORTED = ("compare_groups", "regress", "market_test")
 
@@ -22,17 +23,17 @@ def _optional(compute):
 
 @real.guarded("holdout_confirm")
 def holdout_confirm(args: HoldoutConfirmArgs, raw: dict) -> ToolResult:
-    spec = real._hypotheses.get(args.hypothesis_id)
+    spec = current().hypotheses.get(args.hypothesis_id)
     if spec is None:
         raise real.ToolFailure("unknown_hypothesis")
-    if args.hypothesis_id in real._holdout_used:
+    if args.hypothesis_id in current().holdout_used:
         raise real.ToolFailure("already_used")
     if spec.primary_test not in _SUPPORTED:
         raise real.ToolFailure("not_supported_on_holdout", primary_test=spec.primary_test)
 
     frame = read_sealed_holdout(data.data_dir())
     frame["split"] = "holdout"
-    real._holdout_used.add(args.hypothesis_id)  # used once the sealed rows have been read
+    current().holdout_used.add(args.hypothesis_id)  # used once the sealed rows have been read
     rng = real.rng_for(hash_args(raw))
 
     if spec.primary_test == "compare_groups":

@@ -284,7 +284,20 @@ class StatsGate:
 
     def _spread_control(self, spec: Mapping[str, Any]) -> ToolResult:
         controls = list(dict.fromkeys([*spec.get("controls", []), "spread"]))
-        return self._run_tool("regress", {"spec": {**spec, "controls": controls}})
+        return self._run_tool(
+            "regress",
+            {
+                "spec": {
+                    **spec,
+                    "id": (
+                        f"{spec['id']}__spread_control"
+                        if spec.get("primary_test") == "regress"
+                        else spec["id"]
+                    ),
+                    "controls": controls,
+                }
+            },
+        )
 
     def _survives(
         self, low: float | None, high: float | None, spec: Mapping[str, Any]

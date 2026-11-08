@@ -148,7 +148,10 @@ def test_the_api_agent_can_run_on_the_tool_registry(monkeypatch):
     from backend.api.agent import configured_run
     from contracts.api import CreateRun
 
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("LLM_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("WHACK_TOOLS", "real")
     monkeypatch.setenv("WHACK_AGENT_TOOLS", "registry")
     run = configured_run("run-x", CreateRun(question="Why?"))
     assert isinstance(run.context.tools, RegistryTools)

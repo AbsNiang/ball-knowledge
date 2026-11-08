@@ -22,6 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend.data.join import MIN_JOIN_RATE, JoinResult, join_odds
+from backend.data.manifest import write_manifest
 from backend.data.odds import load_odds
 from backend.data.results import load_lauga_games, load_nba_api_gamelog
 from backend.data.store import PROCESSED_DIR, save_tables
@@ -76,6 +77,7 @@ def build(raw_dir: Path = RAW_DIR, processed_dir: Path = PROCESSED_DIR) -> Build
     joined.unused_odds.to_csv(reports / "unused_odds.csv", index=False)
     joined.score_mismatches.to_csv(reports / "score_mismatches.csv", index=False)
     issues.to_csv(reports / "odds_issues.csv", index=False)
+    write_manifest(processed_dir, joined.rate_by_season)
     return BuildReport(joined, issues, len(team_games))
 
 

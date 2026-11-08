@@ -1,0 +1,159 @@
+{
+  "format_version": 1,
+  "coverage": {
+    "first_season": "2007-08",
+    "last_season": "2021-22"
+  },
+  "sources": [
+    {
+      "name": "NBA Stats LeagueGameLog via nba_api",
+      "url": "https://www.nba.com/stats/teams/boxscores"
+    },
+    {
+      "name": "Sportsbook Reviews Online closing odds archive",
+      "url": "https://web.archive.org/web/2023/https://www.sportsbookreviewsonline.com/scoresoddsarchives/nba/nbaoddsarchives.htm"
+    }
+  ],
+  "build": "python -m backend.data.build; existing processed tables from cbcd51e",
+  "files": {
+    "games.parquet": {
+      "sha256": "16be4898b937fc31cd6946b68bbb980a877f8bffef6b8e0ea71f8ce75f787bd7",
+      "bytes": 289820
+    },
+    "team_games.parquet": {
+      "sha256": "f92962c012055d7cb81dc0e38439d3ca576ab7bab8610166516186b567c99720",
+      "bytes": 669941
+    },
+    "sealed/games.parquet": {
+      "sha256": "a5cd5b4486fde684d0af212e8ded9955228c6cfe382812d6bf4d9b5b076d2eb5",
+      "bytes": 30526
+    },
+    "sealed/team_games.parquet": {
+      "sha256": "e2381877af6b647cb08e2e3689b7f9a75b6b5c37718c66372734d418b48fd14d",
+      "bytes": 70524
+    }
+  },
+  "join_rates": [
+    {
+      "season": "2007-08",
+      "games": 1316,
+      "matched": 1316,
+      "with_spread": 1316,
+      "with_total": 1316,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2008-09",
+      "games": 1315,
+      "matched": 1315,
+      "with_spread": 1315,
+      "with_total": 1315,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2009-10",
+      "games": 1312,
+      "matched": 1312,
+      "with_spread": 1312,
+      "with_total": 1312,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2010-11",
+      "games": 1311,
+      "matched": 1311,
+      "with_spread": 1311,
+      "with_total": 1311,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2011-12",
+      "games": 1074,
+      "matched": 1074,
+      "with_spread": 1074,
+      "with_total": 1074,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2012-13",
+      "games": 1314,
+      "matched": 1314,
+      "with_spread": 1314,
+      "with_total": 1314,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2013-14",
+      "games": 1319,
+      "matched": 1319,
+      "with_spread": 1319,
+      "with_total": 1319,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2014-15",
+      "games": 1311,
+      "matched": 1311,
+      "with_spread": 1311,
+      "with_total": 1311,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2015-16",
+      "games": 1316,
+      "matched": 1316,
+      "with_spread": 1316,
+      "with_total": 1316,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2016-17",
+      "games": 1309,
+      "matched": 1309,
+      "with_spread": 1309,
+      "with_total": 1309,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2017-18",
+      "games": 1312,
+      "matched": 1312,
+      "with_spread": 1312,
+      "with_total": 1312,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2018-19",
+      "games": 1312,
+      "matched": 1312,
+      "with_spread": 1312,
+      "with_total": 1312,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2019-20",
+      "games": 1143,
+      "matched": 1143,
+      "with_spread": 1142,
+      "with_total": 1143,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2020-21",
+      "games": 1171,
+      "matched": 1171,
+      "with_spread": 1171,
+      "with_total": 1171,
+      "join_rate": 1.0
+    },
+    {
+      "season": "2021-22",
+      "games": 1323,
+      "matched": 1323,
+      "with_spread": 1321,
+      "with_total": 1323,
+      "join_rate": 1.0
+    }
+  ],
+  "dataset_version": "c20e8402ba6f6c85"
+}
