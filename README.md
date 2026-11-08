@@ -108,19 +108,29 @@ on restart.
 
 ## Agent loop
 
-The agent loop (`backend/agent/`) runs against a scripted fake LLM and stub tools
-(`backend/agent/stubs.py`), or Person A's mock tools with `--tools mock`. Results are judged by
-the stats gate (`backend/gate/`: G1-G7, the run's test ledger, and the verdict table), which
-re-runs the G4 multiple-testing correction over the whole ledger before the report. It writes
-`contracts/events.py` events and connects to FastAPI through `backend/api/agent.py`.
-The orchestrator is a LangGraph stateful router. A deterministic `router` node folds
-finished gate/critic checks into state and dispatches one specialist per step
-(`premise`, `hypothesize`, `plan_test`, `execute_test`, `choose_test`, `interpret`,
-`verdict`, `report`). When a test passes its gates, the LLM chooses the next follow-up
-(`out_of_sample`, `market_test`, `placebo`, or `holdout_confirm` once G1-G6 pass) or
-concludes. When a gate fails, testing that hypothesis stops and the failure decides its
-verdict; G6 (market) only locks the holdout. State is checkpointed, so approval mode can
-pause on each decision and resume. Run it with the fake LLM (no API key needed):
+The research loop (`backend/agent/`) is a LangGraph stateful router with four LLM roles:
+
+1. **Premise check** (mandatory). The question is restated as a measurable claim and tested
+   on the explore seasons. If the pattern isn't there (or can't be tested), the run ends.
+2. **Seeding.** A Google Search-grounded web search (`source` node), then up to 3 seeds:
+   competing ideas that would answer the question, citing the search results.
+3. **Research, one seed at a time.** Each step: the **researcher** calls one toolkit tool
+   (`backend/agent/toolkit.py`), the **judge** reviews the step and updates the seed's running
+   synthesis (`judgment` node), and the **supervisor** decides to continue with guidance or
+   conclude the seed. A seed gets at most 8 steps.
+4. **Aggregation.** The final answer covers every seed (`report` node and `GET /runs/{id}/report`).
+
+The researcher chooses tools freely, but the rules are code, not prompts. It must
+pre-register a primary test (`declare_primary_test`) before any statistical test on the
+seed. The confirmatory tools (`run_primary_test`, `replicate_primary`, `market_check`,
+`holdout_confirm`) run that frozen spec once each, and they alone set the verdict through
+the stats gate (`backend/gate/`: G1-G7 and the verdict table). Exploratory tests and
+`web_search` inform the judge. Every exploratory p-value enters the run's ledger, and G4's
+multiple-testing correction is re-run over the whole ledger before the report. The judge's
+output is audited: claims must cite evidence ids, and it can't call a seed supported after
+a stopping gate failed. In approval mode a human reviews the premise, each seed and each tool
+call before it runs. Events follow `contracts/events.py` and reach FastAPI through
+`backend/api/agent.py`. Run it with the fake LLM (no API key needed):
 
 ```powershell
 .\.venv\Scripts\python -m backend.agent                         # live mode
@@ -131,7 +141,10 @@ pause on each decision and resume. Run it with the fake LLM (no API key needed):
 ```
 
 `--llm gemini` reads `GEMINI_API_KEY` and `GEMINI_MODEL` from `.env` and sends at most
-`GEMINI_RPM` (default 5) requests per minute, so a full run of about 35 calls takes ~7 minutes.
+`GEMINI_RPM` (default 5) requests per minute. Tool choices use Gemini function calling and
+searches use Google Search grounding, so the model must support both. Every search counts
+as a call: the scripted run makes 36 calls, about 7 minutes at 5 per minute. The CLI default
+for `--llm` is `LLM_MODE` from `.env`, so pass `--llm fake` explicitly to avoid spending quota.
 
 A saved log is valid replay input: with the server running, `POST /replay` with
 `{"log_file":"fake.jsonl","speed":1}` streams the agent's graph to the UI.

@@ -1,82 +1,67 @@
-"""Specialists the router dispatches to. Each builds only the context its decision needs.
+"""The research loop's steps. The router dispatches one per turn and each returns to the router.
 
-LLM specialists make one structured decision, write it as a research-graph node, and queue the
-critic (and the human, in approval mode): D1 `premise`, D2 `hypothesize`, D3 `plan_test`,
-D3b `choose_test` (the next follow-up after a passing gate), D4 `interpret`, D6 `verdict`
-prose and `report`. `execute_test` runs tools; verdict labels come from the gate.
+LLM roles:
+- `premise` (D1): restate the question as a measurable claim.
+- `seed`: one grounded web search, then up to three seeds (ideas that would answer the question).
+- `research`: for the active seed, the researcher calls one toolkit tool (`toolkit.py`).
+- `judge`: reviews the step that just ran and updates the seed's running synthesis.
+- `supervise`: continue the seed with guidance for the researcher, or conclude it.
+- `summarize`: aggregate every seed into the answer.
+`premise_test`, `execute` and `conclude` run tools and rules only. Labels come from the gate.
 """
 
 import asyncio
 import copy
 import re
 import time
-from typing import Any, Literal, Self, get_args
+from typing import Any, Literal, Self
 
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from pydantic import BaseModel, ValidationError, model_validator
 
 from backend.agent.context import AgentContext
+from backend.agent.judge import audit, known_ids, premise_context, render, seed_context, to_check
 from backend.agent.ports import CheckResult, ToolResult, from_gate
-from backend.agent.prompts import PROMPTS
+from backend.agent.prompts import DATASET, PROMPTS
 from backend.agent.record import Recorder, contract_verdict, llm_record, tool_record
-from backend.agent.router import Draft, follow_up_menu, stopping_failures
-from backend.agent.schemas import (
-    ClaimDecision,
-    HypothesisRevision,
-    HypothesisSet,
-    Interpretation,
-    Narrative,
-    NextTest,
-    PlanDecision,
-    PrimaryTest,
-    ReportDraft,
-    next_test_schema,
-)
+from backend.agent.schemas import Aggregate, ClaimDecision, Judgment, SeedSet, Supervision
 from backend.agent.state import (
-    BUDGET_LABEL,
-    LEDGER_TOOLS,
+    CONFIRMATORY,
+    INCONCLUSIVE,
+    MAX_PREMISE_REVISIONS,
+    MAX_STEPS_PER_SEED,
+    NOT_TESTED,
     PREMISE,
+    PREMISE_FALSE,
+    REPORT_RESERVE,
     REVIEW_LABEL,
     UNTESTABLE,
     AgentState,
-    Stage,
+    GateStatus,
+    Premise,
+    Seed,
     Step,
-    Track,
-    latest,
-    new_track,
-    result_steps,
-    track_gates,
+    new_seed,
+    stopping_failures,
+)
+from backend.agent.toolkit import (
+    KIT,
+    LEDGER_TOOLS,
+    Prepared,
+    offered,
+    prepare,
+    step_summary,
+    tool_specs,
 )
 from backend.events.projection import ResearchGraph
-from backend.tools.registry import TOOL_REGISTRY
+from backend.gate.config import SEED as TOOL_SEED
+from backend.llm.gateway import NoToolCall, SearchResult, ToolCall
+from backend.tools.hashing import hash_args
 from contracts.api import Approve, OptionalNote, Reject, RequiredNote
-from contracts.models import LLMRecord
+from contracts.models import LLMRecord, ToolRecord
 
-_SILENT_LABELS = frozenset({BUDGET_LABEL, REVIEW_LABEL})
-MENU_HELP = {
-    "out_of_sample": "Re-run the frozen test on the validation seasons (G5: same sign, at least "
-    "half the effect).",
-    "market_test": "Check whether betting on it beats the closing line after vig (G6: cover-rate "
-    "CI above 52.38%, and the effect survives the spread as a control).",
-    "placebo": "Run the same test where the effect should be absent; set placebo_slice.",
-    "holdout_confirm": "Confirm once on the sealed holdout seasons (G7). Cannot be repeated.",
-    "conclude": "Stop testing this hypothesis. Skipped tests can only weaken its verdict.",
-}
-# What each primary test does (Person A's registry text, kept in sync) and when to pick it.
-_WHEN_TO_USE = {
-    "compare_groups": "Use it for a difference between two groups of team-games, which fits "
-    "most explanations.",
-    "regress": "Use it when other factors must be held fixed: every confounder hypothesis, with "
-    "the confounders as controls.",
-    "persistence": "Use it for team-level claims that may be regression to the mean: does a "
-    "team's metric this season carry into the next?",
-    "market_test": "Use it when the claim is about beating the betting line itself.",
-}
-_REGISTRY_TEXT = {tool["name"]: tool["description"] for tool in TOOL_REGISTRY}
-PRIMARY_TOOL_HELP = {
-    name: f"{_REGISTRY_TEXT[name]} {_WHEN_TO_USE[name]}" for name in get_args(PrimaryTest)
-}
+_NODE_STATE = {"pass": "passed", "flag": "flagged", "fail": "failed"}
 
 
 # -- helpers ---------------------------------------------------------------------------------
@@ -87,25 +72,8 @@ def _deps(runtime: Runtime[AgentContext]) -> tuple[AgentContext, Recorder, Resea
     return ctx, Recorder(ctx.log), ctx.log.graph
 
 
-def _current(state: AgentState) -> Track:
-    return copy.deepcopy(state["tracks"][state["current"]])
-
-
-def _put(state: AgentState, *tracks: Track, **extra: Any) -> dict[str, Any]:
-    merged = dict(state["tracks"])
-    for track in tracks:
-        merged[track["id"]] = track
-    return {"tracks": merged, **extra}
-
-
-def _add(
-    track: Track,
-    node: str,
-    stage: Stage,
-    tool: str | None = None,
-    call: dict[str, Any] | None = None,
-) -> None:
-    track["steps"].append(Step(node=node, stage=stage, tool=tool, gates=None, call=call))
+def _meta(state: AgentState, decision: str) -> dict[str, Any]:
+    return {"run_id": state["run_id"], "decision": decision, "seed": state["current"]}
 
 
 async def _decide(
@@ -115,70 +83,51 @@ async def _decide(
     schema: type[BaseModel],
     context: dict[str, Any],
 ) -> Any:
-    """One LLM decision. Output that fails validation is retried once (plan.md §8.2)."""
-    meta = {"run_id": state["run_id"], "decision": decision}
+    """One structured decision. Output that fails validation is retried once (plan.md §8.2)."""
+    prompt, meta = PROMPTS[decision], _meta(state, decision)
     try:
-        return await ctx.llm.structured(
-            decision, schema, system=PROMPTS[decision], context=context, meta=meta
-        )
+        return await ctx.llm.structured(decision, schema, system=prompt, context=context, meta=meta)
     except ValidationError as exc:
         retry = {**context, "previous_attempt_error": str(exc)}
-        return await ctx.llm.structured(
-            decision, schema, system=PROMPTS[decision], context=retry, meta=meta
-        )
+        return await ctx.llm.structured(decision, schema, system=prompt, context=retry, meta=meta)
 
 
-def _llm(ctx: AgentContext, decision: str, context: dict[str, Any], out: BaseModel) -> LLMRecord:
-    return llm_record(ctx.llm.model_id, decision, context, out)
+async def _choose(
+    ctx: AgentContext, state: AgentState, names: list[str], context: dict[str, Any]
+) -> ToolCall:
+    """The researcher's tool call. A reply with no valid call is retried once."""
+    tools, meta = tool_specs(names), _meta(state, "research")
+    prompt = PROMPTS["research"]
+    try:
+        return await ctx.llm.call_tool("research", tools, system=prompt, context=context, meta=meta)
+    except (ValidationError, NoToolCall) as exc:
+        retry = {**context, "previous_attempt_error": str(exc)}
+        return await ctx.llm.call_tool("research", tools, system=prompt, context=retry, meta=meta)
 
 
-def _queue_review(
-    ctx: AgentContext,
-    state: AgentState,
-    node_ids: list[str],
-    facts: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """The critic reviews every decision; in approval mode a human does too."""
-    for node_id in node_ids:
-        ctx.checks.submit_critic(node_id, facts)
-    update: dict[str, Any] = {"awaiting_critic": [*state["awaiting_critic"], *node_ids]}
-    if state["mode"] == "approval":
-        update["approval"] = [*state["approval"], *node_ids]
-    return update
+def _llm(ctx: AgentContext, decision: str, context: dict[str, Any], out: BaseModel, **kw) -> Any:
+    return llm_record(ctx.llm.model_id, decision, context, out, **kw)
 
 
-def _replaces(track: Track) -> str | None:
-    """The node the next decision replaces (for its `revises` edge); clears the feedback."""
-    old, track["revising"], track["feedback"] = track["revising"], None, None
-    return old
+def _active(state: AgentState) -> Seed:
+    return copy.deepcopy(state["seeds"][state["current"]])
 
 
-def _summary(graph: ResearchGraph, step: Step) -> dict[str, Any]:
-    out = graph.nodes[step["node"]].tool.output
-    extra = {k: v for k, v in out["extra"].items() if not isinstance(v, list | dict)}
-    return {
-        "node_id": step["node"],
-        "tool": out["tool"],
-        "status": out["status"],
-        "reason": out["reason"],
-        "n": out["n"],
-        "effect": out["effect"],
-        "ci": [out["ci_low"], out["ci_high"]],
-        "p_value": out["p_value"],
-        "gates": step["gates"],
-        **extra,
-    }
+def _put(state: AgentState, seed: Seed, **extra: Any) -> dict[str, Any]:
+    return {"seeds": {**state["seeds"], seed["id"]: seed}, **extra}
 
 
-def _frozen_spec(track: Track) -> dict[str, Any]:
-    """The spec the primary test ran with; every follow-up reuses it unchanged."""
-    return latest(track, "primary")["call"]["args"]["spec"]
+def _approve(state: AgentState, node_ids: list[str]) -> dict[str, Any]:
+    """In approval mode a human reviews each decision before anything runs after it."""
+    if state["mode"] != "approval":
+        return {}
+    return {"approval": [*state["approval"], *node_ids]}
 
 
 def _slug(text: str, taken: set[str]) -> str:
-    base = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "hypothesis"
+    base = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "seed"
     slug, n = base, 2
-    while slug in taken:
+    while slug in taken or slug == PREMISE:
         slug, n = f"{base}_{n}", n + 1
     return slug
 
@@ -192,7 +141,141 @@ def _result_title(result: ToolResult) -> str:
     return f"{result.tool}: effect {result.effect:+.2f}{ci}, n={result.n}"
 
 
-# -- nodes -----------------------------------------------------------------------------------
+def _last_node(seed: Seed) -> str:
+    """The seed's latest judgment: each step builds on the synthesis before it. Steps that
+    produced no evidence (errors, rejections) hang off it as side branches."""
+    judged = [step["judgment"] for step in seed["steps"] if step["judgment"]]
+    return judged[-1] if judged else seed["node"]
+
+
+async def _run(ctx: AgentContext, tool: str, args: dict[str, Any]) -> tuple[ToolResult, float]:
+    started = time.perf_counter()
+    result = await asyncio.to_thread(ctx.tools.run, tool, args)
+    return result, (time.perf_counter() - started) * 1000
+
+
+async def _gate(
+    ctx: AgentContext, rec: Recorder, node_id: str, result: ToolResult, spec: dict[str, Any]
+) -> dict[str, GateStatus] | None:
+    """Run the gate on a result and record its checks. A gate error fails closed."""
+    try:
+        checks = await asyncio.to_thread(ctx.gate.evaluate, node_id, result, spec)
+        results = [from_gate(check) for check in checks]
+    except Exception as exc:  # noqa: BLE001 - fail closed and keep the run alive
+        results = [
+            CheckResult(
+                node_id=node_id,
+                checker="gate",
+                gate_id="error",
+                status="fail",
+                rationale=f"Gate error: {exc!r}",
+            )
+        ]
+    for check in results:
+        rec.check(check)
+    failed = result.status != "ok" or any(check.status != "pass" for check in results)
+    rec.mark(node_id, "failed" if failed else "passed", actor="gate")
+    if not results:
+        return None
+    return {c.gate_id: "pass" if c.status == "pass" else "fail" for c in results if c.gate_id}
+
+
+def _tests_spent(budget: dict[str, int], prepared: Prepared, result: ToolResult) -> dict:
+    """Ledger entries this call added: the test itself, plus G6's spread-controlled regression."""
+    spent = int(result.tool in LEDGER_TOOLS and result.status == "ok")
+    spent += int(prepared.role == "market" and result.status == "ok")
+    return {**budget, "tests": budget["tests"] + spent}
+
+
+def _error_result(tool: str, args: dict[str, Any], reason: str, **extra: Any) -> ToolResult:
+    return ToolResult(
+        tool=tool, args=args, status="error", reason=reason, args_hash=hash_args(args), extra=extra
+    )
+
+
+def _source_node(
+    ctx: AgentContext,
+    rec: Recorder,
+    found: SearchResult,
+    parents: list[str],
+    elapsed_ms: float,
+    error: str | None = None,
+) -> str:
+    """A web search as evidence: what the sources say, with links. Never statistical proof."""
+    args = {"query": found.query}
+    output = {
+        "tool": "web_search",
+        "status": "error" if error else "ok",
+        "reason": error,
+        "model_id": ctx.llm.model_id,
+        **found.model_dump(mode="json"),
+    }
+    links = "\n".join(f"- [{hit.title}]({hit.url})" for hit in found.sources)
+    text = found.summary or f"The search failed: {error}"
+    node = rec.node(
+        "source",
+        f"Search: {found.query}",
+        parents=parents,
+        actor="tool",
+        done=error is None,
+        llm=LLMRecord(
+            model_id=ctx.llm.model_id,
+            prompt=found.query,
+            raw_response=found.summary,
+            parsed_output=found.model_dump(mode="json"),
+            rationale=f"{text}\n\n**Sources**\n{links}" if links else text,
+        ),
+        tool=ToolRecord(
+            tool_name="web_search",
+            args=args,
+            args_hash=hash_args(args),
+            output=output,
+            data_slice_hash="",
+            seed=TOOL_SEED,
+            duration_ms=elapsed_ms,
+        ),
+    )
+    if error:
+        rec.mark(node, "failed", actor="tool")
+    return node
+
+
+async def _search(
+    ctx: AgentContext, rec: Recorder, state: AgentState, query: str, parents: list[str]
+) -> tuple[SearchResult, str, str | None]:
+    """A failed search becomes a failed source node, not a failed run."""
+    started = time.perf_counter()
+    try:
+        found = await ctx.llm.search(query, system=PROMPTS["search"], meta=_meta(state, "search"))
+        error = None
+    except Exception as exc:  # noqa: BLE001 - the network is not allowed to end the run
+        found, error = SearchResult(query=query, summary=""), repr(exc)
+    elapsed = (time.perf_counter() - started) * 1000
+    return found, _source_node(ctx, rec, found, parents, elapsed, error), error
+
+
+def seed_label(ctx: AgentContext, seed: Seed) -> str:
+    """The gate's label for a seed, from its confirmatory gates only."""
+    if seed["primary"] is None:
+        return UNTESTABLE if not seed["testable_with_data"] else NOT_TESTED
+    if not seed["gates"]:
+        return NOT_TESTED
+    return ctx.gate.verdict(seed["kind"], seed["gates"], [])
+
+
+def _judgment_view(seed: Seed) -> dict[str, Any] | None:
+    judged = seed["judgment"]
+    if judged is None:
+        return None
+    keys = ("synthesis", "stance", "confidence", "open_questions", "suggested_next")
+    return {k: judged[k] for k in keys}
+
+
+def _steps(graph: ResearchGraph, seed: Seed) -> list[dict[str, Any]]:
+    return [step_summary(graph, step, i) for i, step in enumerate(seed["steps"], 1)]
+
+
+# -- the premise -----------------------------------------------------------------------------
 
 
 async def intake(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -204,8 +287,8 @@ async def intake(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
 async def premise(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """D1: restate the question as a measurable claim (plan.md §8.3)."""
     ctx, rec, _ = _deps(runtime)
-    track = _current(state)
-    context = {"question": state["question"], "feedback": track["feedback"]}
+    track = copy.deepcopy(state["premise"])
+    context = {"question": state["question"], "dataset": DATASET, "feedback": track["feedback"]}
     out: ClaimDecision = await _decide(ctx, state, "premise", ClaimDecision, context)
 
     title = out.claim.statement if out.claim else "Untestable: " + "; ".join(out.missing_data)
@@ -213,384 +296,588 @@ async def premise(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
         "premise_check",
         title,
         parents=[state["question_node"]],
-        revises=_replaces(track),
+        revises=track["revising"],
+        done=not out.testable,  # a testable claim is checked by the judge after its test
         llm=_llm(ctx, "premise", context, out),
     )
-    track["spec_node"] = node
-    track["spec"] = out.claim.model_dump(mode="json") if out.claim else None
-    _add(track, node, "spec")
-    extra: dict[str, Any] = {}
-    if out.testable:
-        track["stage"] = "primary"
-    else:
-        track.update(stage="verdict", forced_label=UNTESTABLE)
-        extra["outcome"] = "untestable"
-    return _put(state, track, **extra, **_queue_review(ctx, state, [node]))
+    track.update(
+        node=node,
+        spec=out.claim.model_dump(mode="json") if out.claim else None,
+        missing_data=list(out.missing_data),
+        result=None,
+        gates=None,
+        judgment=None,
+        feedback=None,
+        revising=None,
+        label=None if out.testable else UNTESTABLE,
+    )
+    phase = "premise_test" if out.testable else "summarize"
+    outcome = None if out.testable else "untestable"
+    return {"premise": track, "phase": phase, "outcome": outcome, **_approve(state, [node])}
 
 
-async def hypothesize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """D2: competing explanations for a premise that passed, or one revised after critique."""
-    ctx, rec, graph = _deps(runtime)
-    premise_track = state["tracks"][PREMISE]
-    claim = premise_track["spec"]
-
-    if state["current"] is not None:
-        track = _current(state)
-        context = {
-            "question": state["question"],
-            "claim": claim,
-            "previous": track["spec"],
-            "tools": PRIMARY_TOOL_HELP,
-            "feedback": track["feedback"],
-        }
-        out: HypothesisRevision = await _decide(
-            ctx, state, "revise_hypothesis", HypothesisRevision, context
-        )
-        spec = out.hypothesis.model_copy(update={"id": track["id"], "kind": track["kind"]})
-        node = rec.node(
-            "hypothesis",
-            spec.statement,
-            parents=[premise_track["spec_node"]],
-            revises=_replaces(track),
-            llm=_llm(ctx, "revise_hypothesis", context, out),
-        )
-        track["spec_node"] = node
-        track["spec"] = spec.model_dump(mode="json")
-        _add(track, node, "spec")
-        track["stage"] = "verdict" if track["kind"] == "chance" else "plan"
-        return _put(state, track, **_queue_review(ctx, state, [node]))
-
-    context = {
-        "question": state["question"],
-        "claim": claim,
-        "premise_result": _summary(graph, latest(premise_track, "primary")),
-        "tools": PRIMARY_TOOL_HELP,
-    }
-    out_set: HypothesisSet = await _decide(ctx, state, "hypothesize", HypothesisSet, context)
-    taken, tracks, nodes = set(state["tracks"]), [], []
-    for proposed in out_set.hypotheses:
-        spec = proposed.model_copy(update={"id": _slug(proposed.id, taken)})
-        taken.add(spec.id)
-        node = rec.node(
-            "hypothesis",
-            spec.statement,
-            parents=[premise_track["spec_node"]],
-            llm=_llm(ctx, "hypothesize", context, out_set),
-        )
-        track = new_track(spec.id, spec.kind, "verdict" if spec.kind == "chance" else "plan")
-        track["spec_node"] = node
-        track["spec"] = spec.model_dump(mode="json")
-        _add(track, node, "spec")
-        tracks.append(track)
-        nodes.append(node)
-    order = [t["id"] for t in tracks if t["kind"] != "chance"]
-    order += [t["id"] for t in tracks if t["kind"] == "chance"]
-    return _put(state, *tracks, order=order, **_queue_review(ctx, state, nodes))
-
-
-async def plan_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """D3: pick the primary test. Its args freeze the spec used for every later test."""
+async def premise_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """The claim's test on the explore seasons. No LLM; the gate decides whether it holds."""
     ctx, rec, _ = _deps(runtime)
-    track = _current(state)
+    track = copy.deepcopy(state["premise"])
     spec = track["spec"]
-    context = {"hypothesis": spec, "tools": PRIMARY_TOOL_HELP, "feedback": track["feedback"]}
-    out: PlanDecision = await _decide(ctx, state, "plan_test", PlanDecision, context)
-
-    frozen = {**spec, "primary_test": out.tool, "controls": list(out.controls)}
-    node = rec.node(
-        "test_plan",
-        f"{out.tool} on {spec['metric']}: {spec['statement']}",
-        parents=[track["spec_node"]],
-        revises=_replaces(track),
-        llm=_llm(ctx, "plan_test", context, out),
-    )
-    _add(track, node, "plan", out.tool, {"tool": out.tool, "args": {"spec": frozen}})
-    track["stage"] = "primary"
-    return _put(state, track, **_queue_review(ctx, state, [node]))
-
-
-async def choose_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """D3b: the latest result passed its gates; pick the next follow-up or conclude."""
-    ctx, rec, graph = _deps(runtime)
-    track = _current(state)
-    frozen = _frozen_spec(track)
-    menu = follow_up_menu(track)
-    context = {
-        "hypothesis": frozen,
-        "tests": [_summary(graph, step) for step in result_steps(track)],
-        "gates": track_gates(track),
-        "menu": {action: MENU_HELP[action] for action in menu},
-        "feedback": track["feedback"],
-    }
-    out: NextTest = await _decide(ctx, state, "choose_test", next_test_schema(menu), context)
-
-    call = None
-    if out.action == "conclude":
-        track["stage"] = "interpret"
-    else:
-        primary = graph.nodes[latest(track, "primary")["node"]]
-        test_id = primary.tool.output["extra"].get("test_id")
-        call = {"tool": out.action, "args": _follow_up_args(out, frozen, test_id, track["id"])}
-        track["stage"] = "follow_up"
-    node = rec.node(
-        "test_plan",
-        f"{out.action}: {out.rationale}",
-        parents=[result_steps(track)[-1]["node"]],
-        revises=_replaces(track),
-        llm=_llm(ctx, "choose_test", context, out),
-    )
-    _add(track, node, "choose", out.action, call)
-    return _put(state, track, **_queue_review(ctx, state, [node]))
-
-
-def _follow_up_args(
-    out: NextTest, frozen: dict[str, Any], test_id: str | None, track_id: str
-) -> dict[str, Any]:
-    """Arguments in the shapes of Person A's tool schemas (`backend/tools/schemas.py`)."""
-    if out.action == "out_of_sample":
-        return {"test_id": test_id}
-    if out.action == "market_test":
-        side = "opp" if frozen["direction"] == "a_lt_b" else "team"
-        return {"slice": frozen["group_a"], "side": side}
-    if out.action == "placebo":
-        return {"test_id": test_id, "placebo_slice": out.placebo_slice.model_dump(mode="json")}
-    return {"hypothesis_id": track_id}  # holdout_confirm
-
-
-async def execute_test(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """Run the tool the track's latest plan or choice asked for. No LLM; the gate runs async."""
-    ctx, rec, _ = _deps(runtime)
-    track = _current(state)
-    stage = track["stage"]
-
-    if track["id"] == PREMISE:
-        spec = track["spec"]
-        call, parent, frozen = (
-            {"tool": "compare_groups", "args": {"spec": spec}},
-            track["spec_node"],
-            spec,
-        )
-    else:
-        decision = latest(track, "plan" if stage == "primary" else "choose")
-        call, parent = decision["call"], decision["node"]
-        frozen = call["args"]["spec"] if stage == "primary" else _frozen_spec(track)
-    tool = call["tool"]
-
-    print(f"CALLING TOOL {tool.upper()} FOR {track['id'].upper()}")  # DEBUG
-    started = time.perf_counter()
-    result = await asyncio.to_thread(ctx.tools.run, tool, call["args"])
-    elapsed_ms = (time.perf_counter() - started) * 1000
+    result, elapsed = await _run(ctx, "compare_groups", {"spec": spec})
     node = rec.node(
         "test_result",
         _result_title(result),
-        parents=[parent],
+        parents=[track["node"]],
         actor="tool",
-        tool=tool_record(result, elapsed_ms),
+        tool=tool_record(result, elapsed),
     )
-    ctx.checks.submit_gate(node, result, frozen)
-
-    _add(track, node, stage, tool, call)
-    track["stage"] = "gated" if track["id"] == PREMISE else "choose"
-    if tool == "holdout_confirm":
-        track["holdout_used"] = True
-    budget = state["budget"]
-    if tool in LEDGER_TOOLS:
-        budget = {**budget, "tests": budget["tests"] + 1}
-    return _put(state, track, budget=budget, awaiting_gate=[*state["awaiting_gate"], node])
+    track.update(result=node, gates=await _gate(ctx, rec, node, result, spec) or {})
+    spent = int(result.status == "ok")
+    budget = {**state["budget"], "tests": state["budget"]["tests"] + spent}
+    return {"premise": track, "budget": budget, "phase": "judge"}
 
 
-async def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """D4: read the gated results for one hypothesis, citing gate ids."""
-    ctx, rec, graph = _deps(runtime)
-    track = _current(state)
-    spec = _frozen_spec(track)
-    results = result_steps(track)
-    failed = stopping_failures(track)
-    choice = latest(track, "choose")
-    if failed:
-        ended = f"a gate failed: {', '.join(failed)}"
-    elif choice and choice["tool"] == "conclude":
-        ended = "the orchestrator chose to conclude"
-    else:
-        ended = "no follow-up tests were left to run"
-    context = {
-        "hypothesis": {k: spec[k] for k in ("statement", "kind", "metric", "direction")},
-        "tests": [_summary(graph, step) for step in results],
-        "gates": track_gates(track),
-        "testing_ended_because": ended,
-        "feedback": track["feedback"],
-    }
-    out: Interpretation = await _decide(ctx, state, "interpret", Interpretation, context)
+def _settle_premise(track: Premise) -> dict[str, Any]:
+    """plan.md §8.3: G1 fails -> Inconclusive; G2 or G3 fails -> Premise false; else seed."""
+    gates = track["gates"] or {}
+    if gates.get("G1") != "pass":
+        track["label"] = INCONCLUSIVE
+        return {"premise": track, "outcome": "inconclusive", "phase": "summarize"}
+    if gates.get("G2") != "pass" or gates.get("G3") != "pass":
+        track["label"] = PREMISE_FALSE
+        return {"premise": track, "outcome": "premise_false", "phase": "summarize"}
+    return {"premise": track, "phase": "seed"}
+
+
+async def _judge_premise(
+    ctx: AgentContext, rec: Recorder, graph: ResearchGraph, state: AgentState
+) -> dict[str, Any]:
+    track = copy.deepcopy(state["premise"])
+    context = premise_context(graph, state["question"], track)
+    out: Judgment = await _decide(ctx, state, "judge", Judgment, context)
+    judged, _ = audit(out, known_ids(context), track["gates"] or {})
     node = rec.node(
-        "interpretation",
-        out.summary,
-        parents=[step["node"] for step in results],
-        revises=_replaces(track),
-        llm=_llm(ctx, "interpret", context, out),
+        "judgment",
+        f"Judge on the premise: {judged['step_review']}",
+        parents=[track["result"]],
+        actor="judge",
+        done=True,
+        llm=_llm(ctx, "judge", context, out, parsed=judged, rationale=render(judged)),
     )
-    _add(track, node, "interpret")
-    track["stage"] = "verdict"
-    return _put(state, track, **_queue_review(ctx, state, [node]))
+    check = rec.check(to_check(track["node"], judged))
+    rec.mark(track["node"], _NODE_STATE[check.status], actor="judge")
+    track["judgment"] = node
+    if judged["step_review"] != "flawed":
+        return _settle_premise(track)
+    if track["revisions"] >= MAX_PREMISE_REVISIONS:
+        track["label"] = REVIEW_LABEL  # still flawed after a revision: no seed builds on it
+        return {"premise": track, "outcome": "review", "phase": "summarize"}
+    track.update(
+        revisions=track["revisions"] + 1,
+        feedback=judged["step_rationale"],
+        revising=track["node"],
+    )
+    return {"premise": track, "phase": "premise"}
 
 
-def _gate_label(ctx: AgentContext, track: Track, tracks: dict[str, Track]) -> str:
-    """The gate's label for a track; a chance track is judged on all the others."""
-    if track["kind"] == "chance":
-        competing = [(t["kind"], track_gates(t)) for t in tracks.values() if t["kind"] != "chance"]
-        return ctx.gate.verdict("chance", {}, competing)
-    return ctx.gate.verdict(track["kind"], track_gates(track), [])
+# -- seeding ---------------------------------------------------------------------------------
 
 
-def _verdict_parent(track: Track) -> str:
-    step = latest(track, "interpret") or latest(track, "primary")
-    return step["node"] if step else track["spec_node"]
-
-
-async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """The label comes from the gate (or a rule); D6 only narrates it."""
+async def seed(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """A grounded web search, then up to three seeds from it and the model's own reasoning."""
     ctx, rec, graph = _deps(runtime)
-    track = _current(state)
-    spec_node = graph.nodes[track["spec_node"]]
-    gates = track_gates(track)
+    track = state["premise"]
+    found, source, _ = await _search(ctx, rec, state, state["question"], [track["node"]])
+    context = {
+        "question": state["question"],
+        "claim": track["spec"],
+        "premise_result": graph.nodes[track["result"]].title,
+        "dataset": DATASET,
+        "search": {
+            "summary": found.summary,
+            "sources": [hit.model_dump() for hit in found.sources],
+        },
+    }
+    out: SeedSet = await _decide(ctx, state, "seed", SeedSet, context)
 
-    label = track["forced_label"] or _gate_label(ctx, track, state["tracks"])
-    contract = contract_verdict(label, gates)
-
-    interpretation = latest(track, "interpret")
-    primary = latest(track, "primary")
-    parent = _verdict_parent(track)
-    title = f"{label}: {spec_node.title}"
-
-    review: dict[str, Any] = {}
-    if state["exhausted"] or label in _SILENT_LABELS:
-        # Label set by rule; no narrative (budget or revision limit reached).
+    urls = {hit.url for hit in found.sources}
+    seeds: dict[str, Seed] = {}
+    taken: set[str] = set()
+    for idea in out.seeds:
+        seed_id = _slug(idea.id, taken)
+        taken.add(seed_id)
+        cited = [url for url in idea.sources if url in urls]
+        links = "".join(f"\n- {url}" for url in cited)
         node = rec.node(
-            "verdict",
-            title,
-            parents=[parent],
-            revises=_replaces(track),
-            actor="gate",
+            "hypothesis",
+            idea.statement,
+            parents=[track["node"], source],
             done=True,
-            verdict=contract,
+            llm=_llm(
+                ctx,
+                "seed",
+                context,
+                out,
+                rationale=idea.rationale + (f"\n\n**Sources**{links}" if links else ""),
+            ),
         )
+        seeds[seed_id] = new_seed(
+            seed_id,
+            node,
+            statement=idea.statement,
+            kind=idea.kind,
+            rationale=idea.rationale,
+            testable_with_data=idea.testable_with_data,
+            sources=[source] if cited else [],
+        )
+    order = list(seeds)
+    seeds[order[0]]["status"] = "active"
+    nodes = [s["node"] for s in seeds.values()]
+    return {
+        "seeds": seeds,
+        "order": order,
+        "current": order[0],
+        "search_node": source,
+        "phase": "research",
+        **_approve(state, nodes),
+    }
+
+
+# -- one research step: research -> execute -> judge -> supervise ----------------------------
+
+
+async def research(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """The researcher calls one tool for the active seed."""
+    ctx, rec, graph = _deps(runtime)
+    track = _active(state)
+    names = offered(track)
+    supervision = track["supervision"] or {}
+    context = {
+        "question": state["question"],
+        "seed": {
+            k: track[k] for k in ("id", "statement", "kind", "rationale", "testable_with_data")
+        },
+        "primary_test": track["primary"],
+        "primary_test_id": track["primary_test_id"],
+        "verdict_gates": track["gates"],
+        "label_if_concluded_now": seed_label(ctx, track),
+        "steps": _steps(graph, track),
+        "latest_judgment": _judgment_view(track),
+        "supervisor_guidance": track["guidance"],
+        "supervisor_rationale": supervision.get("rationale"),
+        "feedback": track["feedback"],
+        "dataset": DATASET,
+        "steps_left": MAX_STEPS_PER_SEED - len(track["steps"]),
+    }
+    call = await _choose(ctx, state, names, context)
+    node = rec.node(
+        "test_plan",
+        f"{call.tool}: {call.reason or 'no reason given'}",
+        parents=[_last_node(track)],
+        llm=_llm(ctx, "research", context, call, rationale=call.reason),
+    )
+    role = KIT[call.tool].role if call.tool in KIT else "data"
+    track["steps"].append(
+        Step(
+            plan=node,
+            result=None,
+            judgment=None,
+            tool=call.tool,
+            role=role,
+            args=dict(call.args),
+            gates=None,
+            error=None,
+        )
+    )
+    track.update(guidance=None, feedback=None)
+    return _put(state, track, phase="execute", **_approve(state, [node]))
+
+
+async def execute(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """Run the researcher's call through the toolkit's rules. No LLM except a web search."""
+    ctx, rec, _ = _deps(runtime)
+    track = _active(state)
+    step = track["steps"][-1]
+    prepared = prepare(track, ToolCall(tool=step["tool"], args=step["args"]))
+    if prepared.error:
+        problems = {"problems": prepared.problems} if prepared.problems else {}
+        failed = _error_result(step["tool"], step["args"], prepared.error, **problems)
+        return _put(state, _failed_step(rec, track, step, failed, 0.0), phase="supervise")
+    if prepared.role == "search":
+        _, node, error = await _search(ctx, rec, state, prepared.args["query"], [step["plan"]])
+        step["result"] = node
+        if error:
+            rec.mark(step["plan"], "failed", actor="tool")
+            step["error"] = f"search failed: {error}"
+            track["feedback"] = f"Your web_search failed: {error}"
+            return _put(state, track, phase="supervise")
+        return _put(state, track, phase="judge")
+    if prepared.role == "declare":
+        return await _declare(ctx, rec, state, track, step, prepared)
+
+    result, elapsed = await _run(ctx, prepared.registry, prepared.args)
+    node = rec.node(
+        "test_result",
+        _result_title(result),
+        parents=[step["plan"]],
+        actor="tool",
+        tool=tool_record(result, elapsed),
+    )
+    if prepared.gate_spec is None:  # diagnostics and data tools: no gate applies
+        rec.mark(node, "passed" if result.status == "ok" else "failed", actor="tool")
+        gates = None
     else:
-        context = {
-            "question": state["question"],
-            "hypothesis": spec_node.title,
-            "kind": track["kind"],
-            "verdict": label,
-            "gates": gates,
-            "missing_data": spec_node.llm.parsed_output.get("missing_data")
-            if spec_node.llm
-            else None,
-            "interpretation": graph.nodes[interpretation["node"]].llm.parsed_output
-            if interpretation
-            else None,
-            "feedback": track["feedback"],
-        }
-        out: Narrative = await _decide(ctx, state, "narrate_verdict", Narrative, context)
-        node = rec.node(
-            "verdict",
-            title,
-            parents=[parent],
-            revises=_replaces(track),
-            llm=_llm(ctx, "narrate_verdict", context, out),
-            verdict=contract,
-        )
-        _add(track, node, "verdict")
-        review = _queue_review(ctx, state, [node], facts={"gates": gates})
+        gates = await _gate(ctx, rec, node, result, prepared.gate_spec)
+    step.update(result=node, gates=gates)
+    if prepared.explored:
+        track["explored"] += 1
+    if prepared.role in CONFIRMATORY:
+        track["used"].append(prepared.tool)
+        track["gates"].update(gates or {})
+        if prepared.role == "primary":
+            track.update(primary_result=node, primary_test_id=result.extra.get("test_id"))
+    budget = _tests_spent(state["budget"], prepared, result)
+    if prepared.role == "data":  # group sizes only: nothing to judge, so straight back
+        rec.mark(step["plan"], "passed" if result.status == "ok" else "failed", actor="tool")
+        if result.status != "ok":
+            step["error"] = f"tool error: {result.reason}"
+            track["feedback"] = f"Your last call ({step['tool']}) failed: {result.reason}"
+        return _put(state, track, budget=budget, phase="research")
+    if result.status != "ok":
+        rec.mark(step["plan"], "failed", actor="tool")
+        step["error"] = f"tool error: {result.reason}"
+        track["feedback"] = f"Your last call ({step['tool']}) failed: {result.reason}"
+        return _put(state, track, budget=budget, phase="supervise")
+    return _put(state, track, budget=budget, phase="judge")
+
+
+def _failed_step(
+    rec: Recorder, track: Seed, step: Step, failed: ToolResult, elapsed: float
+) -> Seed:
+    """A call that could not run: recorded, and fed back to the researcher's next turn."""
+    node = rec.node(
+        "test_result",
+        _result_title(failed),
+        parents=[step["plan"]],
+        actor="tool",
+        tool=tool_record(failed, elapsed),
+    )
+    rec.mark(node, "failed", actor="tool")
+    rec.mark(step["plan"], "failed", actor="tool")
+    detail = "; ".join(f"{p['field']}: {p['problem']}" for p in failed.extra.get("problems", []))
+    step.update(result=node, error=failed.reason + (f" ({detail})" if detail else ""))
+    track["feedback"] = f"Your last call ({step['tool']}) did not run: {step['error']}"
+    return track
+
+
+async def _declare(
+    ctx: AgentContext,
+    rec: Recorder,
+    state: AgentState,
+    track: Seed,
+    step: Step,
+    prepared: Prepared,
+) -> dict[str, Any]:
+    """Freeze the primary test, once both groups are known to exist. Sizes only: no outcomes."""
+    spec = prepared.spec
+    sizes: dict[str, int] = {}
+    problems = []
+    started = time.perf_counter()
+    for name, group in (("n_a", spec["group_a"]), ("n_b", spec["group_b"])):
+        if group == "complement":
+            continue
+        result, _ = await _run(ctx, "define_slice", {"spec": group})
+        if result.status != "ok" or not result.n:
+            problems.append(f"{name}: {result.reason or 'the slice is empty'}")
+        else:
+            sizes[name] = result.n
+    elapsed = (time.perf_counter() - started) * 1000
+    if problems:
+        failed = _error_result("declare_primary_test", {"spec": spec}, "; ".join(problems))
+        return _put(state, _failed_step(rec, track, step, failed, elapsed), phase="supervise")
+    declared = ToolResult(
+        tool="declare_primary_test",
+        args={"spec": spec},
+        args_hash=hash_args({"spec": spec}),
+        n=sizes.get("n_a"),
+        extra={"spec": spec, **sizes},
+    )
+    node = rec.node(
+        "test_result",
+        f"Declared: {spec['statement']}",
+        parents=[step["plan"]],
+        actor="tool",
+        done=True,
+        tool=tool_record(declared, elapsed),
+    )
+    step["result"] = node
+    track.update(primary=spec)
+    track["used"].append("declare_primary_test")
+    return _put(state, track, phase="judge")
+
+
+async def judge(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """Review the step that just ran and update the running synthesis (the premise first)."""
+    ctx, rec, graph = _deps(runtime)
+    if state["current"] is None:
+        return await _judge_premise(ctx, rec, graph, state)
+    track = _active(state)
+    step = track["steps"][-1]
+    context = seed_context(graph, state["question"], track, step, track["sources"])
+    out: Judgment = await _decide(ctx, state, "judge", Judgment, context)
+    judged, _ = audit(out, known_ids(context), track["gates"])
+    node = rec.node(
+        "judgment",
+        f"Judge: {judged['stance']}, {judged['confidence']} confidence",
+        parents=[step["result"]],
+        actor="judge",
+        done=True,
+        llm=_llm(ctx, "judge", context, out, parsed=judged, rationale=render(judged)),
+    )
+    check = rec.check(to_check(step["plan"], judged))
+    rec.mark(step["plan"], _NODE_STATE[check.status], actor="judge")
+    step["judgment"] = node
+    track["judgment"] = judged
+    return _put(state, track, phase="supervise")
+
+
+async def supervise(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """Continue the seed with guidance, or conclude it. The router enforces the step limit."""
+    ctx, _, graph = _deps(runtime)
+    track = _active(state)
+    left = state["budget"]["max_llm_calls"] - ctx.llm.calls - REPORT_RESERVE
+    context = {
+        "question": state["question"],
+        "seed": {k: track[k] for k in ("id", "statement", "kind")},
+        "primary_test": track["primary"],
+        "verdict_gates": track["gates"],
+        "label_if_concluded_now": seed_label(ctx, track),
+        "label_fixed": bool(stopping_failures(track["gates"])),
+        "steps": _steps(graph, track),
+        "latest_judgment": _judgment_view(track),
+        "feedback": track["feedback"],
+        "tools_offered_next": offered(track),
+        "steps_left": MAX_STEPS_PER_SEED - len(track["steps"]),
+        "llm_calls_left": left,
+        "seeds_after_this": sum(state["seeds"][s]["status"] == "queued" for s in state["order"]),
+    }
+    out: Supervision = await _decide(ctx, state, "supervise", Supervision, context)
+    track["supervision"] = {
+        **out.model_dump(mode="json"),
+        "llm": _llm(ctx, "supervise", context, out).model_dump(mode="json"),
+    }
+    if out.action == "continue":
+        track["guidance"] = out.guidance
+        return _put(state, track, phase="research")
+    return _put(state, track, phase="conclude")
+
+
+# -- concluding ------------------------------------------------------------------------------
+
+
+def _conclude_seed(ctx: AgentContext, rec: Recorder, track: Seed) -> None:
+    label = track["forced_label"] or seed_label(ctx, track)
+    contract = contract_verdict(label, track["gates"])
+    supervision = track["supervision"]
+    concluded_by = supervision if supervision and supervision["action"] == "conclude" else None
+    node = rec.node(
+        "verdict",
+        f"{label}: {track['statement']}",
+        parents=[_last_node(track)],
+        actor="gate",
+        done=True,
+        llm=LLMRecord.model_validate(concluded_by["llm"]) if concluded_by else None,
+        verdict=contract,
+    )
     if contract is not None:
-        rec.verdict(track["spec_node"], contract)
-
-    if primary and track["id"] != PREMISE:
-        held = all(gates.get(g) == "pass" for g in ("G2", "G3"))
-        rec.edge(primary["node"], track["spec_node"], "supports" if held else "refutes")
-    track.update(stage="done", verdict=label, verdict_node=node)
-    return _put(state, track, **review)
+        rec.verdict(track["node"], contract)
+    if track["primary_result"]:
+        held = all(track["gates"].get(g) == "pass" for g in ("G2", "G3"))
+        rec.edge(track["primary_result"], track["node"], "supports" if held else "refutes")
+    track.update(status="done", verdict=label, verdict_node=node)
 
 
-def _final_g4(ctx: AgentContext, rec: Recorder, state: AgentState) -> dict[str, Track]:
-    """plan.md §9.1 G4: BH over the final ledger, before the report. Each flip is logged as a
-    check; a verdict it changes is revised by the gate (no narrative, like a budget label)."""
+async def conclude(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """The active seed's verdict, by rule; then the next seed, or the summary."""
+    ctx, rec, _ = _deps(runtime)
+    seeds = copy.deepcopy(state["seeds"])
+    ending = [state["current"]] if state["current"] else []
+    if state["exhausted"]:
+        ending += [sid for sid in state["order"] if seeds[sid]["status"] == "queued"]
+    for seed_id in ending:
+        if seeds[seed_id]["status"] in ("active", "queued"):
+            _conclude_seed(ctx, rec, seeds[seed_id])
+    upcoming = next((sid for sid in state["order"] if seeds[sid]["status"] == "queued"), None)
+    if upcoming is None:
+        return {"seeds": seeds, "current": None, "phase": "summarize"}
+    seeds[upcoming]["status"] = "active"
+    return {"seeds": seeds, "current": upcoming, "phase": "research"}
+
+
+def _final_g4(
+    ctx: AgentContext, rec: Recorder, state: AgentState
+) -> tuple[dict[str, Seed], Premise]:
+    """plan.md §9.1 G4: BH over the final ledger, before the summary. Each flip is logged as a
+    check; a seed label it changes gets a revised verdict node (by rule, like a budget label)."""
     graph = rec.graph
-    tracks = copy.deepcopy(state["tracks"])
+    seeds = copy.deepcopy(state["seeds"])
+    track = copy.deepcopy(state["premise"])
     changed: set[str] = set()
     for check in ctx.gate.reevaluate():
         rec.check(from_gate(check))
-        for track in tracks.values():
-            step = next((s for s in result_steps(track) if s["node"] == check.node_id), None)
+        if check.node_id == track["result"] and track["gates"] is not None:
+            track["gates"]["G4"] = check.status  # logged; the premise was settled on G1-G3
+            held = all(status == "pass" for status in track["gates"].values())
+            rec.mark(check.node_id, "passed" if held else "failed", actor="gate")
+        for seed_track in seeds.values():
+            step = next((s for s in seed_track["steps"] if s["result"] == check.node_id), None)
             if step is None:
-                continue  # superseded by a revision: logged, but it steers nothing
+                continue
             step["gates"] = {**(step["gates"] or {}), "G4": check.status}
             held = all(status == "pass" for status in step["gates"].values())
-            rec.mark(step["node"], "passed" if held else "failed", actor="gate")
-            changed.add(track["id"])
-    if changed:
-        changed |= {tid for tid, t in tracks.items() if t["kind"] == "chance"}
-    for track_id in sorted(changed):
-        track = tracks[track_id]
-        if track["verdict"] is None or track["forced_label"]:
-            continue  # no verdict yet (a premise that held), or a label set by rule
-        label = _gate_label(ctx, track, tracks)
-        if label == track["verdict"]:
+            rec.mark(check.node_id, "passed" if held else "failed", actor="gate")
+            if seed_track["primary_result"] == check.node_id:
+                seed_track["gates"]["G4"] = check.status
+                changed.add(seed_track["id"])
+    for seed_id in sorted(changed):
+        seed_track = seeds[seed_id]
+        if seed_track["verdict"] is None or seed_track["forced_label"]:
             continue
-        contract = contract_verdict(label, track_gates(track))
+        label = seed_label(ctx, seed_track)
+        if label == seed_track["verdict"]:
+            continue
+        contract = contract_verdict(label, seed_track["gates"])
         node = rec.node(
             "verdict",
-            f"{label}: {graph.nodes[track['spec_node']].title}",
-            parents=[_verdict_parent(track)],
-            revises=track["verdict_node"],
+            f"{label}: {seed_track['statement']}",
+            parents=graph.parents(seed_track["verdict_node"]),
+            revises=seed_track["verdict_node"],
             actor="gate",
             done=True,
             verdict=contract,
         )
         if contract is not None:
-            rec.verdict(track["spec_node"], contract)
-        track.update(verdict=label, verdict_node=node)
-    return tracks
+            rec.verdict(seed_track["node"], contract)
+        seed_track.update(verdict=label, verdict_node=node)
+    return seeds, track
 
 
-async def report(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """D6: answer the question from the verdict table. Runs once every check has landed."""
+def _premise_verdict(rec: Recorder, state: AgentState, track: Premise) -> dict[str, Any]:
+    """The single row of a run that ended at the premise."""
+    label = track["label"]
+    anchor = track["node"] or state["question_node"]
+    parent = track["judgment"] or track["result"] or anchor
+    contract = contract_verdict(label, track["gates"] or {})
+    title = track["spec"]["statement"] if track["spec"] else rec.graph.nodes[anchor].title
+    if track["missing_data"]:
+        title = f"{title} (missing: {', '.join(track['missing_data'])})"
+    node = rec.node(
+        "verdict", f"{label}: {title}", parents=[parent], actor="gate", done=True, verdict=contract
+    )
+    if contract is not None:
+        rec.verdict(anchor, contract)
+    track["verdict_node"] = node
+    return {
+        "track": PREMISE,
+        "kind": "premise",
+        "statement": title,
+        "verdict": label,
+        "verdict_node": node,
+        "hypothesis_node": anchor,
+        "stance": None,
+        "confidence": None,
+    }
+
+
+async def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """Aggregate every seed's outcome into the answer to the question."""
     ctx, rec, graph = _deps(runtime)
-    tracks = _final_g4(ctx, rec, state)
-    rows = []
-    for track_id in [PREMISE, *state["order"]]:
-        track = tracks[track_id]
-        if track["verdict"] is None:
-            continue  # a premise that held has no verdict of its own
-        rows.append(
+    seeds, track = _final_g4(ctx, rec, state)
+    if state["outcome"]:
+        rows = [_premise_verdict(rec, state, track)]
+    else:
+        rows = [
             {
-                "track": track_id,
-                "kind": track["kind"],
-                "statement": graph.nodes[track["spec_node"]].title,
-                "verdict": track["verdict"],
-                "verdict_node": track["verdict_node"],
-                "path": [track["verdict_node"], *graph.ancestors(track["verdict_node"])],
+                "track": seed_id,
+                "kind": seeds[seed_id]["kind"],
+                "statement": seeds[seed_id]["statement"],
+                "verdict": seeds[seed_id]["verdict"],
+                "verdict_node": seeds[seed_id]["verdict_node"],
+                "hypothesis_node": seeds[seed_id]["node"],
+                "stance": (seeds[seed_id]["judgment"] or {}).get("stance"),
+                "confidence": (seeds[seed_id]["judgment"] or {}).get("confidence"),
             }
-        )
+            for seed_id in state["order"]
+            if seeds[seed_id]["status"] == "done"
+        ]
+    for row in rows:
+        row["path"] = [row["verdict_node"], *graph.ancestors(row["verdict_node"])]
+
     context = {
         "question": state["question"],
         "outcome": state["outcome"],
-        "verdicts": [{k: row[k] for k in ("statement", "kind", "verdict")} for row in rows],
+        "premise": {
+            "claim": track["spec"]["statement"] if track["spec"] else None,
+            "result": graph.nodes[track["result"]].title if track["result"] else None,
+            "missing_data": track["missing_data"],
+        },
+        "seeds": [
+            {
+                "seed_id": row["track"],
+                "statement": row["statement"],
+                "kind": row["kind"],
+                "verdict": row["verdict"],
+                "judge": _judgment_view(seeds[row["track"]]) if row["track"] in seeds else None,
+            }
+            for row in rows
+        ],
+        "pruned_by_reviewer": [
+            seeds[s]["statement"] for s in state["order"] if seeds[s]["status"] == "pruned"
+        ],
     }
-    out: ReportDraft = await _decide(ctx, state, "report", ReportDraft, context)
+    out: Aggregate = await _decide(ctx, state, "summarize", Aggregate, context)
+    summaries = {s.seed_id: s.summary for s in out.seeds}
+    for row in rows:
+        row["summary"] = summaries.get(row["track"], "")
+    answer = out.answer
+    node = rec.node(
+        "report",
+        f"Answer: {state['question']}",
+        parents=[row["verdict_node"] for row in rows] or [state["question_node"]],
+        done=True,
+        llm=_llm(ctx, "summarize", context, out, rationale=_render_report(answer, rows)),
+    )
     budget = {**state["budget"], "llm_calls": ctx.llm.calls}
-    result = {
+    report = {
         "question": state["question"],
         "outcome": state["outcome"],
-        "answer": out.answer,
+        "answer": answer,
         "verdicts": rows,
+        "report_node": node,
         "budget": budget,
     }
     rec.budget(budget["llm_calls"], budget["tests"])
     rec.status("completed")
-    return {"report": result, "status": "completed", "budget": budget, "tracks": tracks}
+    return {
+        "report": report,
+        "status": "completed",
+        "phase": "done",
+        "seeds": seeds,
+        "premise": track,
+        "budget": budget,
+    }
 
 
-async def wait_checks(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    await runtime.context.checks.wait(state["waiting_on"])
-    return {"waiting_on": []}
+def _render_report(answer: str, rows: list[dict[str, Any]]) -> str:
+    lines = [answer, "", "| Seed | Verdict | Judge |", "|---|---|---|"]
+    for row in rows:
+        judge_view = f"{row['stance']} ({row['confidence']})" if row["stance"] else "n/a"
+        lines.append(f"| {row['statement']} | {row['verdict']} | {judge_view} |")
+    for row in rows:
+        if row.get("summary"):
+            lines += ["", f"**{row['statement']}**: {row['summary']}"]
+    return "\n".join(lines)
+
+
+# -- approval mode ---------------------------------------------------------------------------
 
 
 class ReviewAnswer(BaseModel):
@@ -645,26 +932,61 @@ async def human_review(state: AgentState, runtime: Runtime[AgentContext]) -> dic
     if answer.note:
         rec.annotate(node_id, answer.note)
     rec.status("running")
-    remaining = {**state, "approval": state["approval"][1:]}
+    rest = state["approval"][1:]
+    rec.mark(node_id, "passed" if approved else "failed", actor="human")
     if approved:
-        rec.mark(node_id, "passed", actor="human")
-        return {"approval": remaining["approval"]}
-    draft = Draft(remaining)
-    draft.review(node_id, "fail", f"Human reviewer: {answer.note}", graph)
-    for nid, node_state in draft.node_states:
-        rec.mark(nid, node_state)
-    return draft.changes()
+        return {"approval": rest}
+    return {"approval": rest, **_rejected(rec, state, node.type, node_id, answer.note)}
+
+
+def _rejected(
+    rec: Recorder, state: AgentState, node_type: str, node_id: str, note: str
+) -> dict[str, Any]:
+    """What a human rejection does to each kind of decision."""
+    if node_type == "premise_check":
+        track = copy.deepcopy(state["premise"])
+        if track["revisions"] >= MAX_PREMISE_REVISIONS:
+            track["label"] = REVIEW_LABEL
+            return {"premise": track, "outcome": "review", "phase": "summarize"}
+        track.update(
+            revisions=track["revisions"] + 1, feedback=f"Human reviewer: {note}", revising=node_id
+        )
+        return {"premise": track, "outcome": None, "phase": "premise"}
+
+    seeds = copy.deepcopy(state["seeds"])
+    owner = next((s for s in seeds.values() if s["node"] == node_id or node_id in _plans(s)), None)
+    if owner is None:
+        return {}
+    if node_type == "hypothesis":  # a rejected seed is pruned: never researched or reported
+        rec.mark(node_id, "pruned", actor="human")
+        owner["status"] = "pruned"
+        if state["current"] != owner["id"]:
+            return {"seeds": seeds}
+        upcoming = next((sid for sid in state["order"] if seeds[sid]["status"] == "queued"), None)
+        if upcoming is None:
+            return {"seeds": seeds, "current": None, "phase": "summarize"}
+        seeds[upcoming]["status"] = "active"
+        return {"seeds": seeds, "current": upcoming, "phase": "research"}
+
+    step = next(s for s in owner["steps"] if s["plan"] == node_id)  # a rejected tool call
+    step["error"] = f"rejected by a human reviewer: {note}"
+    owner["feedback"] = f"A human reviewer rejected your last call: {note}"
+    return {"seeds": seeds, "phase": "research"}
+
+
+def _plans(track: Seed) -> set[str]:
+    return {step["plan"] for step in track["steps"]}
 
 
 SPECIALISTS = {
     "premise": premise,
-    "hypothesize": hypothesize,
-    "plan_test": plan_test,
-    "execute_test": execute_test,
-    "choose_test": choose_test,
-    "interpret": interpret,
-    "verdict": verdict,
-    "report": report,
-    "wait_checks": wait_checks,
+    "premise_test": premise_test,
+    "seed": seed,
+    "research": research,
+    "execute": execute,
+    "judge": judge,
+    "supervise": supervise,
+    "conclude": conclude,
+    "summarize": summarize,
     "human_review": human_review,
 }
