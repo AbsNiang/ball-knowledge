@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ball Knowledge</title>
+<style>
+  :root {
+    --bg: #11191c;
+    --bg-glow: #1d2c2c;
+    --card: #1c282b;
+    --line: #34474a;
+    --text: #e8f0ec;
+    --body: #b4c4c1;
+    --muted: #7f9497;
+    --real: #a8dfc3;
+    --priced: #d9c28c;
+    --luck: #e3a691;
+    --unsure: #8b9ea1;
+    --sans: Inter, "Segoe UI", system-ui, sans-serif;
+    --serif: Georgia, "Times New Roman", serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); overflow: hidden; }
+
+  /* Fixed 3:2 canvas, scaled to the window so any screenshot size has the same composition. */
+  #stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 1600px; height: 1066.667px;
+    margin: -533.333px 0 0 -800px;
+    color: var(--text);
+    font-family: var(--sans);
+    background: radial-gradient(ellipse 1000px 620px at 50% 790px, var(--bg-glow) 0%, var(--bg) 100%);
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage > * { position: absolute; }
+
+  .brand { left: 72px; top: 44px; font-size: 38px; font-weight: 650; letter-spacing: -2px; }
+  .brand span { color: var(--real); }
+  .nav { right: 72px; top: 60px; display: flex; gap: 44px; font-size: 17px; color: var(--body); }
+
+  .eyebrow { left: 76px; top: 150px; font-size: 16px; letter-spacing: 3px; color: var(--real); }
+  h1 {
+    left: 72px; top: 182px;
+    font-family: var(--serif); font-weight: 400;
+    font-size: 128px; line-height: 1.08; letter-spacing: -4px;
+    white-space: nowrap;
+  }
+  h1 .real { color: var(--real); }
+  h1 .lucky { color: var(--luck); font-style: italic; }
+
+  .pitch { left: 1036px; top: 190px; width: 492px; }
+  .pitch p { font-size: 26px; line-height: 1.42; color: var(--body); }
+  .pitch b { color: var(--text); font-weight: 500; }
+  .cta { display: flex; align-items: center; gap: 22px; margin-top: 26px; }
+  .button {
+    padding: 15px 26px; border-radius: 7px;
+    background: #bedbb0; color: #203127;
+    font-size: 18px; font-weight: 600; white-space: nowrap;
+  }
+  .note { font-size: 14.5px; line-height: 1.4; color: var(--muted); }
+
+  svg { left: 0; top: 0; }
+
+  .question {
+    left: 72px; top: 708px; width: 300px; height: 164px;
+    padding: 20px 22px;
+    background: var(--card);
+    border: 1px solid #475b54; border-radius: 12px;
+    box-shadow: 0 10px 40px #0004;
+  }
+  .label { font-size: 12.5px; letter-spacing: 2.2px; color: var(--muted); }
+  .question .label { color: #a1b9ae; }
+  .question p { margin-top: 12px; font-size: 25px; line-height: 1.3; font-weight: 500; letter-spacing: -.3px; }
+
+  .verdict-label { left: 1236px; top: 514px; }
+
+  .verdict {
+    left: 1236px; width: 292px;
+    padding: 0 18px;
+    display: flex; flex-direction: column; justify-content: center;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .verdict strong { font-size: 19px; font-weight: 600; letter-spacing: -.2px; }
+  .verdict small { margin-top: 3px; font-size: 14px; color: var(--body); }
+  .verdict.priced { top: 596px; height: 100px; border-color: #65593d; background: #2a271d; }
+  .verdict.priced strong { color: var(--priced); }
+  .verdict.real {
+    top: 732px; height: 116px;
+    border: 1.5px solid var(--real); background: #1f3429;
+    box-shadow: 0 0 0 5px #a8dfc31f, 0 0 60px #a8dfc32e;
+  }
+  .verdict.real strong { font-size: 24px; line-height: 1.16; color: #c6f0d8; }
+  .verdict.luck { top: 870px; height: 66px; border-color: #6d4b41; background: #2e2421; }
+  .verdict.luck strong { color: var(--luck); }
+  .verdict.unsure { top: 950px; height: 66px; }
+  .verdict.unsure strong { color: #b3c3c5; }
+  .verdict.luck, .verdict.unsure { flex-direction: row; align-items: center; justify-content: space-between; }
+  .verdict.luck small, .verdict.unsure small { margin: 0; }
+</style>
+</head>
+<body>
+<main id="stage">
+  <div class="brand">ball knowledge<span>.</span></div>
+  <div class="nav"><span>How it works</span><span>The gates</span><span>Verdicts</span></div>
+
+  <div class="eyebrow">THE AI RESEARCHER THAT TESTS ITS OWN IDEAS</div>
+  <h1><span class="real">A real</span> discovery,<br>or a <span class="lucky">lucky</span> one?</h1>
+
+  <div class="pitch">
+    <p>Ask why something happens in NBA games. An AI proposes the explanations. <b>Seven statistical gates, written in code, decide which survive.</b></p>
+    <div class="cta">
+      <span class="button">Ask a why question</span>
+      <span class="note">A research tool,<br>not betting advice.</span>
+    </div>
+  </div>
+
+  <svg id="gauntlet" width="1600" height="1067" viewBox="0 0 1600 1067" aria-hidden="true"></svg>
+
+  <div class="question">
+    <div class="label">YOUR QUESTION</div>
+    <p>Why do teams on a back-to-back underperform?</p>
+  </div>
+
+  <div class="label verdict-label">VERDICT</div>
+  <div class="verdict priced"><strong>Real but priced in</strong><small>The effect holds. The market knows.</small></div>
+  <div class="verdict real"><strong>Real and beats market</strong><small>Provisional. Passed all seven gates.</small></div>
+  <div class="verdict luck"><strong>Luck</strong><small>Failed G2 to G5</small></div>
+  <div class="verdict unsure"><strong>Inconclusive</strong><small>Too little power</small></div>
+</main>
+
+<script>
+  // The funnel is an illustration: its shape follows the verdict table, not a real run.
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("gauntlet");
+  const add = (tag, attrs, text) => {
+    const el = document.createElementNS(NS, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    if (text) el.textContent = text;
+    svg.appendChild(el);
+    return el;
+  };
+
+  const COLOR = { real: "#a8dfc3", priced: "#d9c28c", luck: "#e3a691", unsure: "#8b9ea1" };
+  const CENTER = 790, SPACING = 16, ORIGIN_X = 372, CARD_X = 1236, PRICED_Y = 646;
+  const GATE_X = (i) => 520 + i * 100;
+  const GATES = [
+    ["G1", "Power"], ["G2", "Uncertainty"], ["G3", "Null"], ["G4", "Multiple testing"],
+    ["G5", "Replication"], ["G6", "Market"], ["G7", "Holdout"],
+  ];
+  // How many hypotheses each gate stops, and the verdict that failing it leads to.
+  const DROPS = [5, 5, 5, 4, 3, 2, 1];
+  const FATE = ["unsure", "luck", "luck", "luck", "luck", "priced", "priced"];
+
+  let seed = 1729;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const curve = (x0, y0, x1, y1) => {
+    const mid = (x1 - x0) * 0.55;
+    return `M${x0} ${y0}C${x0 + mid} ${y0} ${x1 - mid} ${y1} ${x1} ${y1}`;
+  };
+  const yOf = (index, count) => CENTER + (index - (count - 1) / 2) * SPACING;
+
+  GATES.forEach(([id, name], i) => {
+    const x = GATE_X(i);
+    add("line", { x1: x, x2: x, y1: 562, y2: 1016, stroke: "#3b5054", "stroke-width": 2 });
+    add("text", { x, y: 524, "text-anchor": "middle", fill: "#e8f0ec",
+      "font-size": 21, "font-weight": 600, "font-family": "Inter, Segoe UI, sans-serif" }, id);
+    add("text", { x, y: 545, "text-anchor": "middle", fill: "#8fa4a6",
+      "font-size": 13, "font-family": "Inter, Segoe UI, sans-serif" }, name);
+  });
+
+  const total = DROPS.reduce((a, b) => a + b, 0) + 1;
+  let alive = Array.from({ length: total }, (_, id) => ({ id, y: CENTER, x: ORIGIN_X }));
+  const trace = (x0, y0, x1, y1, color, width, opacity) =>
+    add("path", { d: curve(x0, y0, x1, y1), fill: "none", stroke: color,
+      "stroke-width": width, "stroke-opacity": opacity, "stroke-linecap": "round" });
+
+  DROPS.forEach((drop, i) => {
+    const x = GATE_X(i), fate = FATE[i], count = alive.length;
+    // G6 and G7 stop the upper traces so their paths to the priced-in card never cross the winner.
+    const stopped = new Set();
+    if (fate === "priced") alive.slice(0, drop).forEach((t) => stopped.add(t.id));
+    while (fate !== "priced" && stopped.size < drop) {
+      stopped.add(alive[Math.floor(random() * count)].id);
+    }
+    const next = [];
+    alive.forEach((t, index) => {
+      const y = yOf(index, count);
+      const isStopped = stopped.has(t.id);
+      trace(t.x, t.y, x, y, isStopped ? COLOR[fate] : "#9fc4b2", 1.6, isStopped ? 0.62 : 0.5);
+      if (isStopped) {
+        if (fate === "priced") {
+          trace(x, y, CARD_X, PRICED_Y, COLOR.priced, 1.8, 0.62);
+          add("circle", { cx: x, cy: y, r: 4.5, fill: COLOR.priced });
+        } else {
+          const s = 4;
+          const d = `M${x - s} ${y - s}L${x + s} ${y + s}M${x + s} ${y - s}L${x - s} ${y + s}`;
+          add("path", { d, stroke: COLOR[fate], "stroke-width": 2.2, "stroke-linecap": "round" });
+        }
+      } else {
+        next.push({ id: t.id, x, y });
+      }
+    });
+    alive = next;
+  });
+
+  const winner = alive[0];
+  add("defs", {}).innerHTML =
+    '<filter id="glow" x="-20%" y="-400%" width="140%" height="900%">' +
+    '<feGaussianBlur stdDeviation="5"/></filter>';
+  add("path", { d: curve(winner.x, winner.y, CARD_X, CENTER), fill: "none", stroke: COLOR.real,
+    "stroke-width": 7, "stroke-opacity": 0.55, filter: "url(#glow)" });
+  add("path", { d: curve(winner.x, winner.y, CARD_X, CENTER), fill: "none", stroke: COLOR.real,
+    "stroke-width": 3.5, "stroke-linecap": "round" });
+  add("circle", { cx: winner.x, cy: winner.y, r: 6, fill: COLOR.real });
+
+  // Scale the canvas to fill the window.
+  const stage = document.getElementById("stage");
+  const fit = () => {
+    stage.style.transform =
+      `scale(${Math.min(innerWidth / 1600, innerHeight / (1600 / 1.5))})`;
+  };
+  addEventListener("resize", fit);
+  fit();
+</script>
+</body>
+</html>

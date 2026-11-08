@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CircleCheck, FileText } from 'lucide-react';
+import { ChevronDown, CircleCheck, FileText } from 'lucide-react';
 import {
   describe, nodeState, plainText, plainVerdict, verdictParts, verdictTone, type GraphContext, type Tone,
 } from './describe';
@@ -29,6 +30,7 @@ function headline(outcomes: Outcome[]): string {
  * in the full report. Runs without a report (the scripted demo) summarise each hypothesis.
  */
 export function Conclusion({ ctx, onSelect }: { ctx: GraphContext; onSelect: (id: string) => void }) {
+  const [open, setOpen] = useState(true);
   const nodes = Object.values(ctx.nodes);
   const report = nodes.filter(n => n.type === 'report').at(-1);
   const revised = new Set(ctx.edges.filter(e => e.type === 'revises').map(e => e.target));
@@ -56,32 +58,43 @@ export function Conclusion({ ctx, onSelect }: { ctx: GraphContext; onSelect: (id
   return (
     <section className="conclusion" aria-label="Research conclusion">
       <header className="conclusion-header">
-        <span className="conclusion-eyebrow"><CircleCheck size={14} aria-hidden="true" />Research complete</span>
+        <button
+          type="button"
+          className="conclusion-toggle"
+          aria-expanded={open}
+          title={open ? 'Hide the conclusion' : 'Show the conclusion'}
+          onClick={() => setOpen(value => !value)}
+        >
+          <span className="conclusion-eyebrow"><CircleCheck size={14} aria-hidden="true" />Research complete</span>
+          <ChevronDown className="conclusion-chevron" size={14} aria-hidden="true" />
+        </button>
         {report && (
           <button onClick={() => onSelect(report.id)}><FileText size={14} aria-hidden="true" />Full report</button>
         )}
       </header>
-      <div className="conclusion-body">
-        <div className="markdown conclusion-answer"><Markdown remarkPlugins={[remarkGfm]}>{lead}</Markdown></div>
-        {outcomes.length > 0 && (
-          <>
-            <h3 className="conclusion-subhead">What we found</h3>
-            <ul className="conclusion-findings">
-              {outcomes.map(outcome => (
-                <li key={outcome.id}>
-                  <button onClick={() => onSelect(outcome.id)} title="Show this step's evidence">
-                    <span className={`finding-dot ${outcome.tone}`} aria-hidden="true" />
-                    <span className="finding-text">
-                      <span className="finding-statement">{outcome.statement}</span>
-                      <span className={`finding-result ${outcome.tone}`}>{outcome.finding}</span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </div>
+      {open && (
+        <div className="conclusion-body">
+          <div className="markdown conclusion-answer"><Markdown remarkPlugins={[remarkGfm]}>{lead}</Markdown></div>
+          {outcomes.length > 0 && (
+            <>
+              <h3 className="conclusion-subhead">What we found</h3>
+              <ul className="conclusion-findings">
+                {outcomes.map(outcome => (
+                  <li key={outcome.id}>
+                    <button onClick={() => onSelect(outcome.id)} title="Show this step's evidence">
+                      <span className={`finding-dot ${outcome.tone}`} aria-hidden="true" />
+                      <span className="finding-text">
+                        <span className="finding-statement">{outcome.statement}</span>
+                        <span className={`finding-result ${outcome.tone}`}>{outcome.finding}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }

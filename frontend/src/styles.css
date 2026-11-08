@@ -136,6 +136,10 @@ pre.json{max-height:320px;overflow:auto;margin:0;padding:12px;border:1px solid #
 /* -- Conclusion (replaces the watch bar once a run completes) ---------------------------- */
 .conclusion{max-width:900px;max-height:min(38vh,360px);margin:auto;display:flex;flex-direction:column;border:1px solid #3d5a4a;border-radius:10px;background:#18282a;box-shadow:0 6px 30px #0002}
 .conclusion-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 18px;border-bottom:1px solid #2b3d3f}
+.conclusion-header:last-child{border-bottom:0}
+.conclusion-header .conclusion-toggle{display:inline-flex;align-items:center;gap:8px;padding:4px 0;border:0;background:none;cursor:pointer}
+.conclusion-chevron{color:#a8dfc3;transition:transform .15s ease}
+.conclusion-toggle[aria-expanded="false"] .conclusion-chevron{transform:rotate(180deg)}
 .conclusion-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:9px;letter-spacing:1.6px;text-transform:uppercase;color:#a8dfc3}
 .conclusion-header button{padding:6px 11px;border:1px solid #4b6254;border-radius:5px;font-size:11px;color:#c6dfc5}
 .conclusion-body{display:grid;gap:12px;overflow:auto;padding:14px 18px 16px}

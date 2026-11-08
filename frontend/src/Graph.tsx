@@ -159,7 +159,7 @@ export function Graph(props: GraphProps) {
 
 function Flow({ session, ctx, selected, onSelect }: GraphProps) {
   const paused = session.status === 'paused';
-  const { fitView, setCenter } = useReactFlow();
+  const { fitView, getViewport, setCenter } = useReactFlow();
   const width = useStore(s => s.width);
   const height = useStore(s => s.height);
   // Following: show the whole graph while it fits at a readable zoom, else centre the newest
@@ -222,6 +222,33 @@ function Flow({ session, ctx, selected, onSelect }: GraphProps) {
     });
     return () => cancelAnimationFrame(frame);
   }, [following, latest, focusX, focusY, bounds.width, bounds.height, width, height, fitView, setCenter]);
+
+  // While a step is open, the up and down arrows walk the steps in the order the run made them.
+  useEffect(() => {
+    if (!selected) return;
+    const ids = Object.keys(ctx.nodes);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      const index = ids.indexOf(selected);
+      if (index < 0) return;
+      event.preventDefault();
+      const next = ids[index + (event.key === 'ArrowDown' ? 1 : -1)];
+      const to = next ? positions.get(next) : undefined;
+      if (!to) return;
+      onSelect(next);
+      const cardHeight = cards.get(next)?.height ?? 0;
+      const { x, y, zoom } = getViewport();
+      const left = to.x * zoom + x;
+      const top = to.y * zoom + y;
+      if (left >= 0 && top >= PAD.top && left + CARD_WIDTH * zoom <= width && top + cardHeight * zoom <= height) return;
+      setFollowing(false);
+      void setCenter(to.x + CARD_WIDTH / 2, to.y + cardHeight / 2, { zoom: Math.max(zoom, READABLE_ZOOM), duration: 200 });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selected, ctx, positions, cards, width, height, onSelect, getViewport, setCenter]);
 
   return (
     <ReactFlow
