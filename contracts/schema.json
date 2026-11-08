@@ -120,6 +120,7 @@
           "enum": [
             "gate",
             "critic",
+            "judge",
             "human"
           ],
           "title": "Checker",
@@ -387,6 +388,7 @@
             "tool",
             "gate",
             "critic",
+            "judge",
             "human",
             "system"
           ],
@@ -759,7 +761,10 @@
             "interpretation",
             "mechanism_prediction",
             "verdict",
-            "human_note"
+            "human_note",
+            "source",
+            "judgment",
+            "report"
           ],
           "title": "Type",
           "type": "string"

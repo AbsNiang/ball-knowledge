@@ -8,7 +8,7 @@
 export type Seq = number;
 export type RunId = string;
 export type Ts = string;
-export type Actor = "orchestrator" | "tool" | "gate" | "critic" | "human" | "system";
+export type Actor = "orchestrator" | "tool" | "gate" | "critic" | "judge" | "human" | "system";
 export type Type =
   | "run_created"
   | "run_status"
@@ -56,7 +56,10 @@ export type Type4 =
   | "interpretation"
   | "mechanism_prediction"
   | "verdict"
-  | "human_note";
+  | "human_note"
+  | "source"
+  | "judgment"
+  | "report";
 export type Version = number;
 export type CreatedAt = string;
 export type Lifecycle = "proposed" | "running" | "checking" | "complete";
@@ -75,7 +78,7 @@ export type Seed = number;
 export type DurationMs = number;
 export type Id1 = string;
 export type NodeId1 = string;
-export type Checker = "gate" | "critic" | "human";
+export type Checker = "gate" | "critic" | "judge" | "human";
 export type GateId = ("G1" | "G2" | "G3" | "G4" | "G5" | "G6" | "G7") | null;
 export type Status1 = "pass" | "flag" | "fail";
 export type Severity = "low" | "medium" | "high";

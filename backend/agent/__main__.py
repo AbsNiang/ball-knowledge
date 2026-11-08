@@ -107,7 +107,8 @@ async def main() -> None:
     report = run.state["report"]
     print(f"\n{report['answer']}\n")
     for row in report["verdicts"]:
-        print(f"  {row['verdict']:<28} {row['statement']}")
+        judged = f"  (judge: {row['stance']}, {row['confidence']})" if row["stance"] else ""
+        print(f"  {row['verdict']:<36} {row['statement']}{judged}")
     if args.out:
         args.out.write_text(run.log.to_jsonl(), encoding="utf-8")
         print(f"\nwrote {len(run.log.events())} events to {args.out}")

@@ -66,7 +66,9 @@ def test_agent_stream_is_ordered_reconnectable_and_report_matches_verdicts():
             e["payload"]["verdict"]["label"] for e in events if e["type"] == "verdict_computed"
         }
         assert {r.verdict.label for r in report.verdicts} == labels
-        assert "Chance supported" in report.answer
+        assert len(report.verdicts) == 3  # one row per researched seed
+        assert all(row.summary for row in report.verdicts)
+        assert any(e["payload"].get("node", {}).get("type") == "report" for e in events)
         assert api.get(f"{path}/report?format=md").status_code == 200
     assert all(s.worker.done() and s.publisher.done() for s in service.sessions.values())
 
@@ -139,6 +141,24 @@ def test_configuration_failure_is_actionable_and_does_not_block_future_runs():
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "agent_unavailable"
         assert api.post("/demo/runs", json={"question": "Fallback"}).status_code == 202
+
+
+def test_the_api_agent_can_run_on_the_tool_registry(monkeypatch):
+    from backend.agent.ports import RegistryTools
+    from backend.api.agent import configured_run
+    from contracts.api import CreateRun
+
+    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("WHACK_AGENT_TOOLS", "registry")
+    run = configured_run("run-x", CreateRun(question="Why?"))
+    assert isinstance(run.context.tools, RegistryTools)
+    monkeypatch.setenv("WHACK_AGENT_TOOLS", "numbers")
+    try:
+        configured_run("run-y", CreateRun(question="Why?"))
+    except AgentUnavailableError as exc:
+        assert "WHACK_AGENT_TOOLS" in str(exc)
+    else:
+        raise AssertionError("an unknown tool backend must be refused")
 
 
 def test_unknown_saved_session_after_restart_is_explicit():

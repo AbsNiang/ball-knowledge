@@ -2,7 +2,7 @@
 
 `ToolResult` and `GateCheck` are A's (`backend/tools/schemas.py`, `backend/gate/gates.py`), so
 tools and the gate plug in without an adapter layer. `CheckResult` is any check's answer inside
-the agent (gate, critic or human); `Recorder.check` turns it into the contract's `CheckRecord`.
+the agent (gate, judge or human); `Recorder.check` turns it into the contract's `CheckRecord`.
 It allows the pseudo-gate id "error", which fails closed.
 """
 
@@ -31,7 +31,7 @@ GateStatus = Literal["pass", "fail"]
 
 class CheckResult(BaseModel):
     node_id: str
-    checker: Literal["gate", "critic", "human"]
+    checker: Literal["gate", "critic", "judge", "human"]
     gate_id: str | None = None
     status: Literal["pass", "flag", "fail"]
     severity: Literal["low", "medium", "high"] | None = None

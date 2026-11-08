@@ -92,6 +92,13 @@ Node lifecycle, check outcome and flags are separate fields. Revisions get new I
 Consumers deduplicate by `(run_id, seq)` and apply in sequence. Only canonical backend
 snapshots determine graph state; clients do not compute gate verdicts or taint.
 
+Node types for the v3 research loop (plan.md, top): `source` is a web search result with
+its links in `tool.output.sources`, `judgment` is the judge's step review and running
+synthesis (`llm.parsed_output` holds the audited judgment, `llm.rationale` its Markdown),
+and `report` is the final aggregated answer. Seeds use `hypothesis` and research steps use
+`test_plan` → `test_result`. The judge records `checker: "judge"` checks on `test_plan`
+and `premise_check` nodes with `actor: "judge"`. Older logs with `critic` remain valid.
+
 Replay validates an ordered, single-run JSONL log, returns a new run ID, and publishes
 events with original relative delays divided by speed. Node run IDs are remapped;
 node/edge IDs and payload meaning are preserved. No agent calls or interventions occur.

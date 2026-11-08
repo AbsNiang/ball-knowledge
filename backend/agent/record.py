@@ -52,13 +52,22 @@ def title(text: str) -> str:
     return text if len(text) <= TITLE_LIMIT else text[: TITLE_LIMIT - 1] + "…"
 
 
-def llm_record(model_id: str, decision: str, context: dict[str, Any], out: BaseModel) -> LLMRecord:
+def llm_record(
+    model_id: str,
+    decision: str,
+    context: dict[str, Any],
+    out: BaseModel,
+    *,
+    parsed: dict[str, Any] | None = None,
+    rationale: str | None = None,
+) -> LLMRecord:
+    """`parsed` overrides the stored output (an audited judgment); `rationale` the shown text."""
     return LLMRecord(
         model_id=model_id,
         prompt=json.dumps({"decision": decision, "context": context}, default=str),
         raw_response=out.model_dump_json(),
-        parsed_output=out.model_dump(mode="json"),
-        rationale=getattr(out, "rationale", ""),
+        parsed_output=parsed if parsed is not None else out.model_dump(mode="json"),
+        rationale=rationale if rationale is not None else getattr(out, "rationale", ""),
     )
 
 
@@ -78,8 +87,8 @@ def contract_verdict(label: str, gates: dict[str, str]) -> Verdict | None:
     """The contract's `Verdict` for an agent label (plan.md §9.2).
 
     Agent labels outside the contract's taxonomy keep their detail in the node title:
-    `Inconclusive (review)` and `Inconclusive (not replicated)` become `Inconclusive`, and a chance
-    hypothesis gets no `Verdict` because it is resolved by rule as supported/refuted (plan.md [A6]).
+    `Inconclusive (review)`, `(not replicated)` and `(not tested)` become `Inconclusive`. Chance
+    labels from the gate's chance rule (plan.md [A6]) have no contract `Verdict`.
     """
     if label in CONTRACT_LABELS:
         contract_label = label
@@ -144,8 +153,8 @@ class Recorder:
             self.log.append("orchestrator", EdgeCreated(edge=edge))
 
     def mark(self, node_id: str, state: str, actor: Actor = "orchestrator") -> None:
-        """Apply a router node state: an outcome (`passed`/`flagged`/`failed`), or a flag
-        (`tainted`, `awaiting_approval`)."""
+        """Apply a node state: an outcome (`passed`/`flagged`/`failed`), or a flag (`tainted`,
+        `pruned`, `awaiting_approval`)."""
         node = self.graph.nodes[node_id]
         flags = set(node.flags)
         changes: dict[str, Any] = {}
@@ -155,8 +164,9 @@ class Recorder:
         elif state == "awaiting_approval":
             changes = {"lifecycle": "checking"}
             flags.add(state)
-        elif state == "tainted":
+        elif state in ("tainted", "pruned"):
             flags.add(state)
+            flags.discard("awaiting_approval")
         else:
             raise ValueError(f"unknown node state {state!r}")
         self._snapshot(node, actor, flags=flags, **changes)

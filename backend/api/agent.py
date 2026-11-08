@@ -31,11 +31,14 @@ class Session:
 
 
 def configured_run(run_id: str, request: CreateRun):
-    """Keep the CLI's defaults: fake LLM and explicitly synthetic tools, judged by the real gate."""
+    """The CLI's defaults (fake LLM, synthetic stub tools, the real gate), configurable by env:
+    `LLM_MODE` (fake | gemini) and `WHACK_AGENT_TOOLS` (stub | registry). `registry` runs
+    Person A's tools: the real ones when the dataset is built, mock ones otherwise."""
     try:
         from dotenv import load_dotenv
 
         from backend.agent.graph import AgentRun
+        from backend.agent.ports import RegistryTools
         from backend.agent.stubs import StubTools, b2b_script
         from backend.gate.gates import StatsGate
         from backend.llm.fake import FakeLLM
@@ -50,7 +53,10 @@ def configured_run(run_id: str, request: CreateRun):
             llm = FakeLLM(b2b_script)
         else:
             raise RuntimeError("LLM_MODE must be fake or gemini.")
-        tools = StubTools()
+        choice = os.environ.get("WHACK_AGENT_TOOLS", "stub").strip().lower()
+        if choice not in ("stub", "registry"):
+            raise RuntimeError("WHACK_AGENT_TOOLS must be stub or registry.")
+        tools = StubTools() if choice == "stub" else RegistryTools()
         return AgentRun(
             request.question,
             run_id=run_id,
@@ -102,7 +108,6 @@ class AgentService:
         except Exception as exc:  # noqa: BLE001 - AgentRun logs the failure as an event
             # AgentRun emits the error and failed status in the same ordered log.
             logger.error("Agent run %s failed (%s)", session.run.run_id, type(exc).__name__)
-            await session.run.context.checks.aclose()
         finally:
             # Shutdown cancels the publisher too, so don't wait on its queue then.
             if not asyncio.current_task().cancelling():
@@ -158,27 +163,21 @@ class AgentService:
         if result is None:
             return None
         rows = []
-        extra = []
         for row in result["verdicts"]:
             node = run.log.graph.nodes[row["verdict_node"]]
             if node.verdict is None:
-                # Chance conclusions aren't part of the contract's verdict taxonomy.
-                extra.append(f"{row['statement']}: {row['verdict']}")
-                continue
+                continue  # labels outside the contract's taxonomy stay in the answer text
             rows.append(
                 ReportRow(
-                    hypothesis_id=run.state["tracks"][row["track"]]["spec_node"],
+                    hypothesis_id=row["hypothesis_node"],
                     title=row["statement"],
                     verdict=node.verdict,
                     path=row["path"],
-                    summary=node.llm.rationale if node.llm else row["verdict"],
+                    summary=row.get("summary") or row["verdict"],
                 )
             )
         return Report(
-            run_id=run_id,
-            question=result["question"],
-            answer="\n\n".join([result["answer"], *extra]),
-            verdicts=rows,
+            run_id=run_id, question=result["question"], answer=result["answer"], verdicts=rows
         )
 
     async def aclose(self):
@@ -189,5 +188,3 @@ class AgentService:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        for session in self.sessions.values():
-            await session.run.context.checks.aclose()

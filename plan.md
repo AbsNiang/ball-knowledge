@@ -1,5 +1,39 @@
 # Requirements: AI Researcher for NBA Betting Patterns (Hackathon MVP)
 
+> **v3 research loop (current implementation).** This replaces the fixed hypothesis pipeline
+> in v2 §8.1, the 3-5 hypotheses with a chance track (FR2.5, D2) and the per-decision critic
+> (FR5.2, §9.3). The gates, ledger, verdict table, premise rules (§8.3), budget, approval mode
+> and event contracts still apply.
+>
+> 1. **Premise check first** (unchanged, mandatory): claim, then a test on the explore seasons.
+>    The run ends with *Premise false*, *Inconclusive* or *Untestable* when that check says so.
+>    The judge reviews the claim, and a flawed claim gets one revision.
+> 2. **Seeding:** one Google Search-grounded web search, then up to **3 seeds** (competing ideas
+>    that would answer the question) from the sources plus the model's own reasoning.
+> 3. **Research, one seed at a time.** A step is: the **researcher** calls one tool, the **judge**
+>    reviews it and updates the seed's running synthesis, and the **supervisor** (orchestrator)
+>    continues with guidance or concludes the seed. A seed gets at most 8 steps.
+> 4. **Aggregation:** one summary call writes the answer across all seeds (a `report` node).
+>
+> **Rules in code, not prompts** (`backend/agent/toolkit.py`):
+> - Pre-registration: `declare_primary_test` before any statistical test on the seed. The spec
+>   is then frozen.
+> - The confirmatory tools run that spec once each, and only they set the verdict label:
+>   `run_primary_test` (G1-G4), `replicate_primary` (G5), `market_check` (G6) and
+>   `holdout_confirm` (G7, after G1-G6 pass).
+> - Exploratory tests run under their own ids. Every p-value enters the ledger, so G4 counts
+>   the forking paths.
+> - `web_search` results are context, never statistical evidence.
+> - The judge sees evidence, not the researcher's reasons. A rule-based audit drops claims
+>   without cited evidence ids, caps the stance at *mixed* after a stopping-gate failure, and
+>   caps confidence until the primary test holds.
+> - The verdict label = the gate's label. The judge's stance and confidence are reported next
+>   to it, never instead of it.
+> - Each step is paid for before it starts, so the budget never cuts a step off halfway.
+>
+> New graph node types: `source` (web search), `judgment` (judge) and `report` (final answer).
+> Plus a `judge` actor/checker.
+
 ## Context
 Hackathon brief: *"Finding patterns in data is easy; knowing which ones to trust is hard. Build an AI researcher that tests its own ideas and can tell a real discovery from a lucky one."*
 
