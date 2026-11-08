@@ -9,8 +9,9 @@ remaining milestone 2 work below remain the implementation reference.
 - Branch: `deploy/railway-demo`; deployed code commit: `27f18fa`.
 - Railway deployment: `c562faef-5853-4120-8ebd-5ee4ae6324e8`, status `SUCCESS`.
 - One replica, one Uvicorn worker, 1 GB memory limit, fake LLM mode, no Gemini key.
-- Uploaded through the authenticated Railway CLI. GitHub source attachment still
-  returns "User does not have access to the repo"; branch pushes do not autodeploy.
+- Initially uploaded through the authenticated Railway CLI. GitHub access was
+  subsequently granted and the service now tracks `AbsNiang/whack` on
+  `deploy/railway-demo`; pushes to that branch trigger deployments automatically.
 - Validation: backend suite (300 passed, 8 skipped before the extra boundary test),
   four production tests, Ruff, 11 frontend tests, frontend build, development
   integration, local Docker smoke, and hosted Node 22 smoke passed. Hosted smoke

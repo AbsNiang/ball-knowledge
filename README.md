@@ -46,9 +46,9 @@ npx --yes @railway/cli up --project d5cd55e4-f2ed-47f5-88bd-5c686c909d21 --envir
 ```
 
 The CLI respects `.gitignore`; keep the bundled `replays/mock.jsonl` exception.
-The current deployment was uploaded from commit `27f18fa` on `deploy/railway-demo`.
-It uses CLI uploads because Railway's GitHub source connection still rejects this
-private repository. Pushing the branch does not automatically redeploy the service.
+Railway is connected to `AbsNiang/whack` on `deploy/railway-demo`. Pushes to that
+branch automatically build and deploy the service. The initial deployment was
+uploaded from commit `27f18fa` through the CLI before GitHub access was granted.
 
 Deployment uses `LLM_MODE=fake`, `LANGSMITH_TRACING=false`, and `PORT=8000`.
 No Gemini key is needed. Sessions, evidence, and checkpoints are in memory and
