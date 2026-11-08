@@ -1,8 +1,9 @@
 """What the agent needs from Person A's tools and gate.
 
-`ToolResult` is A's (`backend/tools/schemas.py`), so tools plug in without an adapter layer.
-`CheckResult` is the gate's and critic's answer inside the agent; `Recorder.check` turns it into
-the contract's `CheckRecord`. It allows the pseudo-gate id "error", which fails closed.
+`ToolResult` and `GateCheck` are A's (`backend/tools/schemas.py`, `backend/gate/gates.py`), so
+tools and the gate plug in without an adapter layer. `CheckResult` is any check's answer inside
+the agent (gate, critic or human); `Recorder.check` turns it into the contract's `CheckRecord`.
+It allows the pseudo-gate id "error", which fails closed.
 """
 
 from collections.abc import Mapping, Sequence
@@ -10,10 +11,20 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.gate.gates import GateCheck
 from backend.tools.registry import dispatch
 from backend.tools.schemas import ToolResult
 
-__all__ = ["CheckResult", "Gate", "GateStatus", "RegistryTools", "ToolResult", "Tools"]
+__all__ = [
+    "CheckResult",
+    "Gate",
+    "GateCheck",
+    "GateStatus",
+    "RegistryTools",
+    "ToolResult",
+    "Tools",
+    "from_gate",
+]
 
 GateStatus = Literal["pass", "fail"]
 
@@ -26,6 +37,10 @@ class CheckResult(BaseModel):
     severity: Literal["low", "medium", "high"] | None = None
     rationale: str
     evidence: list[str] = Field(default_factory=list)
+
+
+def from_gate(check: GateCheck) -> CheckResult:
+    return CheckResult(checker="gate", **check.model_dump())
 
 
 class Tools(Protocol):
@@ -42,9 +57,11 @@ class RegistryTools:
 
 
 class Gate(Protocol):
+    """Person A's `backend.gate.gates.StatsGate`. One per run: it owns the run's test ledger."""
+
     def evaluate(
         self, node_id: str, result: ToolResult, spec: Mapping[str, Any]
-    ) -> list[CheckResult]:
+    ) -> list[GateCheck]:
         """The gates (G1-G7) that apply to this tool's result. `spec` is the frozen hypothesis."""
         ...
 
@@ -52,7 +69,12 @@ class Gate(Protocol):
         self,
         kind: str,
         gates: Mapping[str, GateStatus],
-        competing: Sequence[Mapping[str, GateStatus]],
+        competing: Sequence[tuple[str, Mapping[str, GateStatus]]],
     ) -> str:
-        """`compute_verdict` (plan.md §9.2). `competing` is only read for chance hypotheses."""
+        """`compute_verdict` (plan.md §9.2). `competing` is (kind, gates) for the premise and
+        every non-chance hypothesis, and is only read for chance hypotheses."""
+        ...
+
+    def reevaluate(self) -> list[GateCheck]:
+        """G4 over the final ledger (plan.md §9.1): the checks whose result flipped."""
         ...

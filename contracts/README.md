@@ -140,7 +140,7 @@ errors remove only that saved session; other errors and event gaps remain visibl
 The default agent adapter forwards the standalone log in order through `EventSink`,
 skipping its duplicate creation/intervention envelopes because the API assigns those.
 It supports pause/resume, approve/reject, and set-mode. Unsupported commands return
-409; redirect remains demo-only. It uses the CLI's default stub tools/gates and the
+409; redirect remains demo-only. It uses the CLI's default stub tools, the real gate, and the
 configured fake/Gemini gateway. No event model or generated contract changed.
 
 Agent pause/resume must emit `paused` only after the current step has stopped advancing,

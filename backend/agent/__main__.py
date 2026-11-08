@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 
 from backend.agent.graph import AgentRun
 from backend.agent.ports import RegistryTools
-from backend.agent.stubs import B2B_QUESTION, StubGate, StubTools, b2b_script
+from backend.agent.stubs import B2B_QUESTION, StubTools, b2b_script
+from backend.gate.gates import StatsGate
 from backend.llm.fake import FakeLLM
 from contracts.events import Event
 from contracts.models import Node
@@ -80,11 +81,12 @@ async def main() -> None:
         print(f"using {llm.model_id}, at most {llm._limiter.rpm} requests per minute")
     else:
         llm = FakeLLM(b2b_script)
+    tools = StubTools() if args.tools == "stub" else RegistryTools()
     run = AgentRun(
         args.question,
         llm=llm,
-        tools=StubTools() if args.tools == "stub" else RegistryTools(),
-        gate=StubGate(),
+        tools=tools,
+        gate=StatsGate(tools.run),
         mode=args.mode,
         budget={"max_llm_calls": args.max_llm_calls},
         run_id=f"{args.llm}-run",

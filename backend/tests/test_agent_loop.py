@@ -1,4 +1,5 @@
-"""End-to-end runs of the stateful router with the fake LLM, stub tools and stub gate."""
+"""End-to-end runs of the stateful router with the fake LLM and stub tools, judged by the real
+gate (`backend/gate`)."""
 
 import asyncio
 from itertools import pairwise
@@ -12,12 +13,12 @@ from backend.agent.state import result_steps
 from backend.agent.stubs import (
     B2B_QUESTION,
     B2B_RESULTS,
-    NOT_REPLICATED,
-    StubGate,
     StubTools,
     b2b_script,
 )
 from backend.events.projection import reduce
+from backend.gate.gates import StatsGate
+from backend.gate.verdict import NOT_REPLICATED
 from backend.llm.fake import FakeLLM
 from backend.tools import mock
 from backend.tools.registry import _TOOLS_BY_NAME
@@ -31,12 +32,13 @@ B2B_VERDICTS = {
 }
 
 
-def make_run(script=b2b_script, results=B2B_RESULTS, llm=None, **kwargs):
+def make_run(script=b2b_script, results=B2B_RESULTS, llm=None, tools=None, **kwargs):
+    tools = tools or StubTools(results)
     return AgentRun(
         B2B_QUESTION,
         llm=llm or FakeLLM(script),
-        tools=StubTools(results),
-        gate=StubGate(),
+        tools=tools,
+        gate=StatsGate(tools.run),
         run_id="test",
         **kwargs,
     )
@@ -148,11 +150,19 @@ def test_the_holdout_runs_once_and_only_after_g1_to_g6_pass():
         "ci_low": -2.4,
         "ci_high": 0.0,
         "p_value": 0.05,
-        "extra": {"same_sign": True, "retention": 0.79},
+        "extra": {
+            "same_sign": True,
+            "retention": 0.79,
+            # holdout_confirm reports the team side; the gate mirrors it for an a_lt_b claim.
+            "market": {"ci_low": 0.41, "ci_high": 0.47, "rate": 0.44},
+            "spread_controlled": {"effect": -1.0, "ci_low": -1.9, "ci_high": -0.1},
+        },
     }
+    with_spread = {"n": 4810, "effect": -1.3, "ci_low": -2.2, "ci_high": -0.4, "p_value": 0.004}
     results = {
         **B2B_RESULTS,
         ("travel_fatigue", "market_test"): {**market, "effect": 0.556, "ci_low": 0.531},
+        ("travel_fatigue", "regress"): with_spread,  # the gate's spread control for G6
         ("travel_fatigue", "holdout_confirm"): holdout,
     }
     run = make_run(results=results)
@@ -379,11 +389,33 @@ def fresh_mock_tools():
 
 
 def test_the_loop_runs_on_person_a_mock_tools(fresh_mock_tools):
-    run = make_run()
-    run.context.tools = RegistryTools()
+    run = make_run(tools=RegistryTools())
     run_to_end(run)
     assert run.state["status"] == "completed"
     results = [n.tool.output for n in nodes(run, "test_result")]
     assert results and all(r["status"] == "ok" for r in results), [
         (r["tool"], r["reason"]) for r in results if r["status"] != "ok"
     ]
+
+
+def test_a_g4_flip_at_report_time_revises_the_verdict():
+    # p=0.02 passes BH on the two-entry ledger it arrives on, not on the final one of six.
+    first = B2B_RESULTS[("travel_fatigue", "compare_groups")]
+    results = {**B2B_RESULTS, ("travel_fatigue", "compare_groups"): {**first, "p_value": 0.02}}
+    run = make_run(results=results)
+    run_to_end(run)
+
+    assert verdicts(run)["travel_fatigue"] == "Luck"
+    rechecks = [
+        e.payload.check
+        for e in run.log.events()
+        if e.type == "check_result" and e.payload.check.rationale.startswith("Re-evaluated")
+    ]
+    primary = result_steps(run.state["tracks"]["travel_fatigue"])[0]["node"]
+    assert [(c.node_id, c.gate_id, c.status) for c in rechecks] == [(primary, "G4", "fail")]
+    graph = run.log.graph
+    assert graph.nodes[primary].check_outcome == "failed"
+    track = run.state["tracks"]["travel_fatigue"]
+    revised = graph.nodes[track["verdict_node"]]
+    assert revised.title.startswith("Luck: ") and revised.version == 2
+    assert graph.nodes[track["spec_node"]].verdict.label == "Luck"

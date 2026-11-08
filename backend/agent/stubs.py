@@ -1,20 +1,19 @@
 """Development stand-ins so the agent loop runs end to end with zero LLM quota.
 
 - `b2b_script`: scripted LLM decisions (and an approving critic) for the back-to-back question.
-- `StubTools` / `StubGate`: canned `ToolResult`s and a toy G1-G7 + verdict table, until Person A's
-  `backend/tools` and `backend/gate` land. The numbers are invented: they exercise the plumbing
-  and say nothing about the NBA.
+- `StubTools`: canned `ToolResult`s for that question. The numbers are invented: they exercise
+  the plumbing and say nothing about the NBA. Person A's real gate (`backend/gate`) judges them.
 """
 
 import hashlib
 import json
 import random
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
 
-from backend.agent.ports import CheckResult, GateStatus, ToolResult
+from backend.agent.ports import ToolResult
 from backend.agent.schemas import (
     ClaimDecision,
     CriticChecklist,
@@ -33,7 +32,6 @@ from backend.agent.state import LEDGER_TOOLS
 from backend.tools.hashing import hash_args
 
 B2B_QUESTION = "Why do teams on the second night of a back-to-back underperform?"
-NOT_REPLICATED = "Inconclusive (not replicated)"
 
 
 def _slice(*filters: tuple[str, str, Any]) -> SliceSpec:
@@ -296,98 +294,3 @@ class StubTools:
             "p_value": round(rng.uniform(0.2, 0.9), 3),
             "extra": extra,
         }
-
-
-ALPHA, BH_Q, N_MIN, RETENTION, BREAKEVEN = 0.05, 0.05, 200, 0.5, 0.5238
-SESOI = {"ats_margin": 1.0, "margin": 1.0}  # binary and ROI metrics: 0.03
-
-
-class StubGate:
-    """Toy version of plan.md §9.1-9.2. G4 is provisional BH over this run's ledger."""
-
-    def __init__(self) -> None:
-        self._ledger: dict[str, float] = {}
-
-    def evaluate(
-        self, node_id: str, result: ToolResult, spec: Mapping[str, Any]
-    ) -> list[CheckResult]:
-        def check(gate_id: str, ok: bool, why: str) -> CheckResult:
-            return CheckResult(
-                node_id=node_id,
-                checker="gate",
-                gate_id=gate_id,
-                status="pass" if ok else "fail",
-                rationale=why,
-            )
-
-        primary = result.tool in ("compare_groups", "regress", "persistence")
-        gate_ids = {"out_of_sample": ["G5"], "market_test": ["G6"], "holdout_confirm": ["G7"]}
-        gate_ids = gate_ids.get(result.tool, ["G1", "G2", "G3", "G4"] if primary else [])
-        if result.status == "error":
-            return [check(g, False, f"Tool error: {result.reason}") for g in gate_ids or ["error"]]
-
-        x = result.extra
-        if result.tool in LEDGER_TOOLS:
-            self._ledger[x.get("test_id", node_id)] = result.p_value
-        if primary:
-            n_a, n_b, mde = x.get("n_a", 0), x.get("n_b", 0), x.get("mde", float("inf"))
-            sesoi = SESOI.get(spec["metric"], 0.03)
-            sign = {"a_lt_b": result.effect < 0, "a_gt_b": result.effect > 0}
-            ci = f"[{result.ci_low:+.2f}, {result.ci_high:+.2f}]"
-            return [
-                check(
-                    "G1",
-                    min(n_a, n_b) >= N_MIN and mde <= sesoi,
-                    f"n_a={n_a}, n_b={n_b}; MDE {mde:.2f} vs SESOI {sesoi}",
-                ),
-                check(
-                    "G2",
-                    (result.ci_low > 0 or result.ci_high < 0) and sign.get(spec["direction"], True),
-                    f"95% CI {ci}, declared {spec['direction']}",
-                ),
-                check("G3", result.p_value < ALPHA, f"p={result.p_value:.4f} vs {ALPHA}"),
-                check(
-                    "G4",
-                    self._bh_rejects(x.get("test_id", node_id)),
-                    f"BH at q={BH_Q} over {len(self._ledger)} ledger entries",
-                ),
-            ]
-        if result.tool in ("out_of_sample", "holdout_confirm"):
-            ok = bool(x.get("same_sign")) and x.get("retention", 0) >= RETENTION
-            why = f"same_sign={x.get('same_sign')}, retention={x.get('retention')}"
-            return [check(gate_ids[0], ok, why)]
-        if result.tool == "market_test":
-            return [
-                check(
-                    "G6",
-                    result.ci_low > BREAKEVEN,
-                    f"cover CI low {result.ci_low:.3f} vs break-even {BREAKEVEN}",
-                )
-            ]
-        return []
-
-    def _bh_rejects(self, key: str) -> bool:
-        ps = sorted(self._ledger.values())
-        m = len(ps)
-        cutoff = max((p for k, p in enumerate(ps, 1) if p <= k / m * BH_Q), default=-1.0)
-        return self._ledger[key] <= cutoff
-
-    def verdict(
-        self,
-        kind: str,
-        gates: Mapping[str, GateStatus],
-        competing: Sequence[Mapping[str, GateStatus]],
-    ) -> str:
-        if kind == "chance":
-            # plan.md [A6]: supported if the premise or any competitor fails G2-G5.
-            lost = any(g.get(x) == "fail" for g in competing for x in ("G2", "G3", "G4", "G5"))
-            return "Chance supported" if lost else "Chance refuted"
-        if gates.get("G1") != "pass":
-            return "Inconclusive"
-        if any(gates.get(g) != "pass" for g in ("G2", "G3", "G4")) or gates.get("G5") == "fail":
-            return "Luck"
-        if "G5" not in gates:  # the orchestrator concluded before replicating
-            return NOT_REPLICATED
-        if gates.get("G6") != "pass" or gates.get("G7") != "pass":
-            return "Real but priced in"
-        return "Real and beats market (provisional)"

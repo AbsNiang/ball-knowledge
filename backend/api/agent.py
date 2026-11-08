@@ -31,12 +31,13 @@ class Session:
 
 
 def configured_run(run_id: str, request: CreateRun):
-    """Keep the CLI's defaults: fake LLM and explicitly synthetic tools/gates."""
+    """Keep the CLI's defaults: fake LLM and explicitly synthetic tools, judged by the real gate."""
     try:
         from dotenv import load_dotenv
 
         from backend.agent.graph import AgentRun
-        from backend.agent.stubs import StubGate, StubTools, b2b_script
+        from backend.agent.stubs import StubTools, b2b_script
+        from backend.gate.gates import StatsGate
         from backend.llm.fake import FakeLLM
 
         load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -49,14 +50,15 @@ def configured_run(run_id: str, request: CreateRun):
             llm = FakeLLM(b2b_script)
         else:
             raise RuntimeError("LLM_MODE must be fake or gemini.")
+        tools = StubTools()
         return AgentRun(
             request.question,
             run_id=run_id,
             mode=request.mode,
             budget=request.budget.model_dump(include={"max_llm_calls", "max_tests"}),
             llm=llm,
-            tools=StubTools(),
-            gate=StubGate(),
+            tools=tools,
+            gate=StatsGate(tools.run),
         )
     except ImportError as exc:
         raise AgentUnavailableError(

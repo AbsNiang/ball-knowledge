@@ -17,7 +17,7 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, ValidationError, model_validator
 
 from backend.agent.context import AgentContext
-from backend.agent.ports import CheckResult, ToolResult
+from backend.agent.ports import CheckResult, ToolResult, from_gate
 from backend.agent.prompts import PROMPTS
 from backend.agent.record import Recorder, contract_verdict, llm_record, tool_record
 from backend.agent.router import Draft, follow_up_menu, stopping_failures
@@ -58,7 +58,7 @@ MENU_HELP = {
     "out_of_sample": "Re-run the frozen test on the validation seasons (G5: same sign, at least "
     "half the effect).",
     "market_test": "Check whether betting on it beats the closing line after vig (G6: cover-rate "
-    "CI above 52.38%).",
+    "CI above 52.38%, and the effect survives the spread as a control).",
     "placebo": "Run the same test where the effect should be absent; set placebo_slice.",
     "holdout_confirm": "Confirm once on the sealed holdout seasons (G7). Cannot be repeated.",
     "conclude": "Stop testing this hypothesis. Skipped tests can only weaken its verdict.",
@@ -433,6 +433,19 @@ async def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[s
     return _put(state, track, **_queue_review(ctx, state, [node]))
 
 
+def _gate_label(ctx: AgentContext, track: Track, tracks: dict[str, Track]) -> str:
+    """The gate's label for a track; a chance track is judged on all the others."""
+    if track["kind"] == "chance":
+        competing = [(t["kind"], track_gates(t)) for t in tracks.values() if t["kind"] != "chance"]
+        return ctx.gate.verdict("chance", {}, competing)
+    return ctx.gate.verdict(track["kind"], track_gates(track), [])
+
+
+def _verdict_parent(track: Track) -> str:
+    step = latest(track, "interpret") or latest(track, "primary")
+    return step["node"] if step else track["spec_node"]
+
+
 async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """The label comes from the gate (or a rule); D6 only narrates it."""
     ctx, rec, graph = _deps(runtime)
@@ -440,18 +453,12 @@ async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
     spec_node = graph.nodes[track["spec_node"]]
     gates = track_gates(track)
 
-    if track["forced_label"]:
-        label = track["forced_label"]
-    elif track["kind"] == "chance":
-        competing = [track_gates(t) for t in state["tracks"].values() if t["kind"] != "chance"]
-        label = ctx.gate.verdict("chance", {}, competing)
-    else:
-        label = ctx.gate.verdict(track["kind"], gates, [])
+    label = track["forced_label"] or _gate_label(ctx, track, state["tracks"])
     contract = contract_verdict(label, gates)
 
     interpretation = latest(track, "interpret")
     primary = latest(track, "primary")
-    parent = (interpretation or primary or {"node": track["spec_node"]})["node"]
+    parent = _verdict_parent(track)
     title = f"{label}: {spec_node.title}"
 
     review: dict[str, Any] = {}
@@ -502,12 +509,54 @@ async def verdict(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str
     return _put(state, track, **review)
 
 
+def _final_g4(ctx: AgentContext, rec: Recorder, state: AgentState) -> dict[str, Track]:
+    """plan.md §9.1 G4: BH over the final ledger, before the report. Each flip is logged as a
+    check; a verdict it changes is revised by the gate (no narrative, like a budget label)."""
+    graph = rec.graph
+    tracks = copy.deepcopy(state["tracks"])
+    changed: set[str] = set()
+    for check in ctx.gate.reevaluate():
+        rec.check(from_gate(check))
+        for track in tracks.values():
+            step = next((s for s in result_steps(track) if s["node"] == check.node_id), None)
+            if step is None:
+                continue  # superseded by a revision: logged, but it steers nothing
+            step["gates"] = {**(step["gates"] or {}), "G4": check.status}
+            held = all(status == "pass" for status in step["gates"].values())
+            rec.mark(step["node"], "passed" if held else "failed", actor="gate")
+            changed.add(track["id"])
+    if changed:
+        changed |= {tid for tid, t in tracks.items() if t["kind"] == "chance"}
+    for track_id in sorted(changed):
+        track = tracks[track_id]
+        if track["verdict"] is None or track["forced_label"]:
+            continue  # no verdict yet (a premise that held), or a label set by rule
+        label = _gate_label(ctx, track, tracks)
+        if label == track["verdict"]:
+            continue
+        contract = contract_verdict(label, track_gates(track))
+        node = rec.node(
+            "verdict",
+            f"{label}: {graph.nodes[track['spec_node']].title}",
+            parents=[_verdict_parent(track)],
+            revises=track["verdict_node"],
+            actor="gate",
+            done=True,
+            verdict=contract,
+        )
+        if contract is not None:
+            rec.verdict(track["spec_node"], contract)
+        track.update(verdict=label, verdict_node=node)
+    return tracks
+
+
 async def report(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     """D6: answer the question from the verdict table. Runs once every check has landed."""
     ctx, rec, graph = _deps(runtime)
+    tracks = _final_g4(ctx, rec, state)
     rows = []
     for track_id in [PREMISE, *state["order"]]:
-        track = state["tracks"][track_id]
+        track = tracks[track_id]
         if track["verdict"] is None:
             continue  # a premise that held has no verdict of its own
         rows.append(
@@ -536,7 +585,7 @@ async def report(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     }
     rec.budget(budget["llm_calls"], budget["tests"])
     rec.status("completed")
-    return {"report": result, "status": "completed", "budget": budget}
+    return {"report": result, "status": "completed", "budget": budget, "tracks": tracks}
 
 
 async def wait_checks(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
